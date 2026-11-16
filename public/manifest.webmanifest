@@ -1,0 +1,11 @@
+{
+  "name": "Kalm",
+  "short_name": "Kalm",
+  "description": "A calm daily planner: plan the day, timebox it, focus, shut down.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f1e8",
+  "theme_color": "#2f5d47",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
