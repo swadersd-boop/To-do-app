@@ -2,7 +2,18 @@
 // right away; everything else is served from cache and refreshed behind it.
 const CACHE = 'kalm-v1';
 
-self.addEventListener('install', () => self.skipWaiting());
+const SHELL = ['./', './manifest.webmanifest', './icon.svg', './icon-180.png', './icon-192.png'];
+
+self.addEventListener('install', (event) => {
+  // A failed precache must not block the install: the fetch handler fills the cache anyway.
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(SHELL))
+      .catch(() => undefined)
+      .then(() => self.skipWaiting()),
+  );
+});
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
