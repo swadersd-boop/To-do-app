@@ -190,7 +190,7 @@ function Header({ onFocus }: { onFocus: () => void }) {
       <button type="button" className="icon-btn" onClick={() => ui.openModal('insights')} aria-label="Insights">
         <BarChart3 size={18} />
       </button>
-      <button type="button" className="icon-btn" onClick={() => ui.openModal('help')} aria-label="Shortcuts and help">
+      <button type="button" className="icon-btn hide-narrow" onClick={() => ui.openModal('help')} aria-label="Shortcuts and help">
         <HelpCircle size={18} />
       </button>
       <button type="button" className="icon-btn" onClick={() => ui.openModal('settings')} aria-label="Settings">

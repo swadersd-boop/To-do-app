@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { STORAGE_KEY, useStore } from './store';
+import '@fontsource-variable/fraunces';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(

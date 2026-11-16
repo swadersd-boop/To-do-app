@@ -10,7 +10,7 @@ import { fmtClock, snap } from '../lib/time';
 import { useNow } from './bits';
 
 /** Height of one minute on the timeline, in pixels. */
-export const PX_PER_MIN = 1.2;
+export const PX_PER_MIN = 1.5;
 const STEP = 15;
 
 type Gesture = { id: string; mode: 'move' | 'resize'; originY: number; start: number; length: number; moved: boolean };
@@ -69,7 +69,7 @@ function Block({
   const width = 100 / cols;
   return (
     <div
-      className={`block ${task.done ? 'is-done' : ''} ${gesture?.moved ? 'is-moving' : ''} ${length <= 30 ? 'is-short' : ''}`}
+      className={`block ${task.done ? 'is-done' : ''} ${gesture?.moved ? 'is-moving' : ''} ${length <= 30 ? 'is-short' : ''} ${length <= 15 ? 'is-tiny' : ''}`}
       style={{
         top: (start - dayStartMin) * PX_PER_MIN,
         height: Math.max(STEP, length) * PX_PER_MIN - 2,

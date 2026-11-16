@@ -181,26 +181,41 @@ export function EstimateChip({ value, onChange, actualMin }: { value: number | n
   );
 }
 
-/** A centered dialog with a dimmed backdrop. Escape and backdrop clicks close it. */
+/**
+ * A centered dialog with a dimmed backdrop. Escape and backdrop clicks close it.
+ * `top` and `footer` stay put while the body scrolls. Changing `scrollKey`
+ * scrolls the body back to the top, which multi-step dialogs use per step.
+ */
 export function Dialog({
   title,
   onClose,
   children,
+  top,
+  footer,
+  scrollKey,
   wide = false,
   className = '',
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  top?: ReactNode;
+  footer?: ReactNode;
+  scrollKey?: unknown;
   wide?: boolean;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     return () => previous?.focus?.();
   }, []);
+
+  useEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, [scrollKey]);
 
   return createPortal(
     <div className="backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -224,7 +239,11 @@ export function Dialog({
             <X size={18} />
           </button>
         </header>
-        <div className="dialog-body">{children}</div>
+        {top && <div className="dialog-top">{top}</div>}
+        <div ref={body} className="dialog-body">
+          {children}
+        </div>
+        {footer && <footer className="dialog-foot">{footer}</footer>}
       </div>
     </div>,
     document.body,

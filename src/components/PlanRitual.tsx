@@ -95,9 +95,38 @@ export function PlanRitual() {
     await copyText(`${location.origin}${location.pathname}${hash}`, 'Link copied. Anyone with it can read this plan.');
   };
 
+  const footer = (
+    <>
+        {step > 0 && (
+          <button type="button" className="btn" onClick={() => setStep(step - 1)}>
+            <ArrowLeft size={14} />
+            Back
+          </button>
+        )}
+        <span className="spacer" />
+        {step < STEPS.length - 1 ? (
+          <button type="button" className="btn btn-primary" onClick={() => setStep(step + 1)}>
+            Next
+            <ArrowRight size={14} />
+          </button>
+        ) : (
+          <button type="button" className="btn btn-primary" onClick={finish}>
+            Start my day
+          </button>
+        )}
+    </>
+  );
+
   return (
-    <Dialog title={`Plan ${longDate(today)}`} onClose={close} wide className="ritual">
-      <Stepper steps={STEPS} step={step} />
+    <Dialog
+      title={`Plan ${longDate(today)}`}
+      onClose={close}
+      wide
+      className="ritual"
+      top={<Stepper steps={STEPS} step={step} />}
+      footer={footer}
+      scrollKey={step}
+    >
 
       {step === 0 && (
         <div className="ritual-step">
@@ -245,25 +274,6 @@ export function PlanRitual() {
         </div>
       )}
 
-      <footer className="ritual-foot">
-        {step > 0 && (
-          <button type="button" className="btn" onClick={() => setStep(step - 1)}>
-            <ArrowLeft size={14} />
-            Back
-          </button>
-        )}
-        <span className="spacer" />
-        {step < STEPS.length - 1 ? (
-          <button type="button" className="btn btn-primary" onClick={() => setStep(step + 1)}>
-            Next
-            <ArrowRight size={14} />
-          </button>
-        ) : (
-          <button type="button" className="btn btn-primary" onClick={finish}>
-            Start my day
-          </button>
-        )}
-      </footer>
     </Dialog>
   );
 }

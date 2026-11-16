@@ -45,9 +45,38 @@ export function ShutdownRitual() {
     notify('Day closed. Work is done for today.');
   };
 
+  const footer = (
+    <>
+        {step > 0 && (
+          <button type="button" className="btn" onClick={() => setStep(step - 1)}>
+            <ArrowLeft size={14} />
+            Back
+          </button>
+        )}
+        <span className="spacer" />
+        {step < STEPS.length - 1 ? (
+          <button type="button" className="btn btn-primary" onClick={step === 0 ? begin : () => setStep(step + 1)}>
+            Next
+            <ArrowRight size={14} />
+          </button>
+        ) : (
+          <button type="button" className="btn btn-primary" onClick={finish}>
+            Done for today
+          </button>
+        )}
+    </>
+  );
+
   return (
-    <Dialog title={`Shut down ${longDate(today)}`} onClose={close} wide className="ritual">
-      <Stepper steps={STEPS} step={step} />
+    <Dialog
+      title={`Shut down ${longDate(today)}`}
+      onClose={close}
+      wide
+      className="ritual"
+      top={<Stepper steps={STEPS} step={step} />}
+      footer={footer}
+      scrollKey={step}
+    >
 
       {step === 0 && (
         <div className="ritual-step">
@@ -148,25 +177,6 @@ export function ShutdownRitual() {
         </div>
       )}
 
-      <footer className="ritual-foot">
-        {step > 0 && (
-          <button type="button" className="btn" onClick={() => setStep(step - 1)}>
-            <ArrowLeft size={14} />
-            Back
-          </button>
-        )}
-        <span className="spacer" />
-        {step < STEPS.length - 1 ? (
-          <button type="button" className="btn btn-primary" onClick={step === 0 ? begin : () => setStep(step + 1)}>
-            Next
-            <ArrowRight size={14} />
-          </button>
-        ) : (
-          <button type="button" className="btn btn-primary" onClick={finish}>
-            Done for today
-          </button>
-        )}
-      </footer>
     </Dialog>
   );
 }

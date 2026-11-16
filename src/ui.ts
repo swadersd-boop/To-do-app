@@ -37,7 +37,7 @@ interface UI {
   dismissToast: () => void;
 }
 
-const wide = () => typeof window === 'undefined' || window.innerWidth >= 900;
+const atLeast = (px: number) => typeof window === 'undefined' || window.innerWidth >= px;
 
 /** View state. Only the two panel toggles are remembered between visits. */
 export const useUI = create<UI>()(
@@ -49,8 +49,8 @@ export const useUI = create<UI>()(
       openTaskId: null,
       focusTaskId: null,
       modal: null,
-      sidebarOpen: wide(),
-      timelineOpen: wide(),
+      sidebarOpen: atLeast(1200),
+      timelineOpen: atLeast(900),
       toast: null,
 
       setToday: (d) =>

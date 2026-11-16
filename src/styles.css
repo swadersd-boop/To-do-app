@@ -6,30 +6,32 @@
   --surface-2: #ebe5d7;
   --ink: #1f2a24;
   --ink-2: #55625a;
-  --ink-3: #848f87;
+  --ink-3: #66716a;
   --line: #dcd4c2;
   --accent: #2f5d47;
   --accent-ink: #fffdf8;
   --accent-soft: #dce8de;
+  --chip: #e9e2d2;
   --warn: #a8551a;
   --warn-soft: #f6e2cb;
   --sun: #e9b44c;
   --shadow: 0 1px 2px rgb(40 34 20 / 0.06), 0 2px 8px rgb(40 34 20 / 0.05);
   --shadow-lift: 0 10px 30px rgb(40 34 20 / 0.18);
-  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --serif: 'Fraunces Variable', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
   --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --radius: 10px;
   color-scheme: light;
 }
 
 :root[data-theme='dark'] {
-  --bg: #141a17;
-  --surface: #1d2622;
-  --surface-2: #19211d;
+  --bg: #131816;
+  --surface: #25302b;
+  --surface-2: #1b2420;
   --ink: #e8ece6;
-  --ink-2: #aab4ac;
-  --ink-3: #78847d;
-  --line: #2f3b35;
+  --ink-2: #b1bab3;
+  --ink-3: #909b94;
+  --line: #36433d;
+  --chip: #35423c;
   --accent: #86c7a3;
   --accent-ink: #0f1f18;
   --accent-soft: #24392f;
@@ -168,7 +170,7 @@ code {
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.6;
   cursor: default;
 }
 
@@ -250,6 +252,11 @@ code {
   width: 96px;
 }
 
+select.field {
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
 textarea.field {
   height: auto;
   padding: 8px 10px;
@@ -275,6 +282,7 @@ textarea.field {
 }
 
 .check {
+  position: relative;
   display: inline-grid;
   place-items: center;
   flex: none;
@@ -333,7 +341,7 @@ textarea.field {
   height: 22px;
   padding: 0 8px;
   border-radius: 6px;
-  background: var(--surface-2);
+  background: var(--chip);
   color: var(--ink-2);
   font-size: 12px;
   font-weight: 600;
@@ -342,6 +350,7 @@ textarea.field {
 }
 
 .chip-btn {
+  position: relative;
   border: 1px solid transparent;
 }
 
@@ -560,15 +569,15 @@ textarea::placeholder {
 }
 
 .shell.has-sidebar {
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: 268px minmax(0, 1fr);
 }
 
 .shell.has-timeline {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 304px;
 }
 
 .shell.has-sidebar.has-timeline {
-  grid-template-columns: 290px minmax(0, 1fr) 320px;
+  grid-template-columns: 268px minmax(0, 1fr) 304px;
 }
 
 /* ---------- Board ---------- */
@@ -587,7 +596,7 @@ textarea::placeholder {
 .col {
   display: flex;
   flex-direction: column;
-  flex: 0 0 276px;
+  flex: 0 0 264px;
   min-height: 0;
   padding: 4px 8px 0;
   border-radius: 14px 14px 0 0;
@@ -698,6 +707,7 @@ textarea::placeholder {
 }
 
 .card {
+  position: relative;
   padding: 10px 10px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -728,11 +738,15 @@ textarea::placeholder {
 }
 
 .card-title {
+  display: -webkit-box;
   flex: 1;
   min-width: 0;
   padding-top: 1px;
   line-height: 1.35;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .card.is-done {
@@ -745,11 +759,16 @@ textarea::placeholder {
   text-decoration: line-through;
 }
 
+/* The play button floats over the corner, so titles get the full card width. */
 .card-play {
-  width: 24px;
-  height: 24px;
-  margin: -2px -2px 0 0;
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--surface);
   opacity: 0;
 }
 
@@ -826,7 +845,11 @@ textarea::placeholder {
 
 .objectives li.is-done .objective-title,
 .subtasks li.is-done span,
-.subtasks li.is-done .sub-title {
+.subtasks li.is-done .props .field {
+  width: min(100%, 210px);
+}
+
+.sub-title {
   color: var(--ink-3);
   text-decoration: line-through;
 }
@@ -937,6 +960,24 @@ li:focus-within > .row-x {
   gap: 8px;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+.block.is-short .block-x {
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.block.is-tiny {
+  padding-left: 7px;
+}
+
+.block.is-tiny .block-title {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.block.is-tiny .block-time {
+  display: none;
 }
 
 .block.is-moving {
@@ -1086,6 +1127,26 @@ li:focus-within > .row-x {
   overflow-y: auto;
 }
 
+.dialog-top {
+  flex: none;
+  padding: 0 24px 4px;
+}
+
+.dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 12px 24px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.dialog-foot .btn {
+  height: 38px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+
 .dialog-body h4,
 .drawer-body h4 {
   margin-top: 8px;
@@ -1100,6 +1161,10 @@ li:focus-within > .row-x {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.form > .row.wrap {
+  gap: 10px 16px;
 }
 
 .channel-list {
@@ -1175,15 +1240,16 @@ li:focus-within > .row-x {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 14px/1.6 var(--sans);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 /* ---------- Rituals ---------- */
 
-.ritual .dialog-body {
-  min-height: min(520px, 70dvh);
+/* A fixed height keeps the dialog from jumping as the steps change length. */
+.dialog.ritual {
+  height: min(88dvh, 720px);
 }
 
 .stepper {
@@ -1347,20 +1413,6 @@ li:focus-within > .row-x {
   font-variant-numeric: tabular-nums;
 }
 
-.ritual-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: auto;
-  padding-top: 14px;
-}
-
-.ritual-foot .btn {
-  height: 38px;
-  padding: 0 16px;
-  font-size: 14px;
-}
-
 /* ---------- Task drawer ---------- */
 
 .drawer {
@@ -1413,7 +1465,7 @@ li:focus-within > .row-x {
 
 .props {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 96px minmax(0, 1fr);
   gap: 10px 12px;
   align-items: center;
 }
@@ -1687,39 +1739,39 @@ li:focus-within > .row-x {
 
 /* ---------- Small screens ---------- */
 
+@media (min-width: 900px) and (max-width: 1199px) {
+  .shell.has-sidebar,
+  .shell.has-sidebar.has-timeline {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .shell.has-timeline {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+
+  .shell.has-sidebar.has-timeline {
+    grid-template-columns: 240px minmax(0, 1fr) 280px;
+  }
+}
+
 @media (max-width: 899px) {
+  .app {
+    padding-bottom: calc(61px + env(safe-area-inset-bottom));
+  }
+
   .top {
-    flex-wrap: wrap;
-    gap: 2px;
-    height: auto;
-    padding: 6px 8px;
-  }
-
-  /* Second row: day navigation on the left, the rituals on the right. */
-  .top::after {
-    content: '';
-    order: 9;
-    flex-basis: 100%;
-  }
-
-  .top-nav {
-    order: 10;
-  }
-
-  .top-rituals {
-    order: 11;
-    margin-left: auto;
+    gap: 0;
+    height: 52px;
+    padding: 0 6px;
   }
 
   .brand {
-    margin: 0 6px 0 2px;
+    margin: 0 4px 0 2px;
   }
 
+  .brand span,
   .top-month,
-  .top-rituals .btn:not(.btn-primary) .label {
-    display: none;
-  }
-
+  .hide-narrow,
   .wide-only {
     display: none;
   }
@@ -1728,15 +1780,59 @@ li:focus-within > .row-x {
     display: inline;
   }
 
-  .top-rituals {
-    gap: 6px;
-    margin-right: 0;
-  }
-
-  .top-rituals .btn,
-  .top .icon-btn {
+  .top .icon-btn,
+  .top-nav .btn {
     height: 40px;
     min-width: 40px;
+  }
+
+  /* The three rituals sit in a bar at the bottom, within reach of a thumb. */
+  .top-rituals {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 0;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .top-rituals .btn {
+    justify-content: center;
+    height: 44px;
+    padding: 0 6px;
+  }
+
+  .toast {
+    bottom: calc(74px + env(safe-area-inset-bottom));
+  }
+
+  /* Bigger touch areas than the controls look. */
+  .check::after,
+  .chip-btn::after,
+  .card-play::after,
+  .block-x::after,
+  .row-x::after {
+    content: '';
+    position: absolute;
+    inset: -11px;
+  }
+
+  .row-x {
+    position: relative;
+  }
+
+  .card-title {
+    padding-right: 30px;
+  }
+
+  .card.is-done .card-title {
+    padding-right: 0;
   }
 
   .shell,
@@ -1753,7 +1849,7 @@ li:focus-within > .row-x {
     top: 0;
     bottom: 0;
     z-index: 20;
-    width: min(88vw, 340px);
+    width: 100%;
     background: var(--bg);
     box-shadow: var(--shadow-lift);
   }
@@ -1809,5 +1905,20 @@ li:focus-within > .row-x {
 
   .ritual-row {
     flex-wrap: wrap;
+  }
+
+  /* The title takes its own line, with the estimate and actions under it. */
+  .ritual-row-main {
+    flex: 1 1 calc(100% - 40px);
+  }
+
+  .dialog.ritual {
+    height: 94dvh;
+  }
+
+  .dialog-top,
+  .dialog-foot {
+    padding-left: 18px;
+    padding-right: 18px;
   }
 }
