@@ -55,8 +55,9 @@ describe('parseQuickAdd', () => {
   it('resolves weekdays to the next occurrence, never today', () => {
     expect(parse('Review fri').date).toBe('2026-11-20');
     expect(parse('Review on Friday').title).toBe('Review');
-    expect(parse('Review monday').date).toBe('2026-11-23');
-    expect(parse('Brunch sunday').date).toBe('2026-11-22');
+    expect(parse('Review mon').date).toBe('2026-11-23');
+    expect(parse('Brunch sun').date).toBe('2026-11-22');
+    expect(parse('Brunch on Sunday')).toMatchObject({ title: 'Brunch', date: '2026-11-22' });
   });
 
   it('sends "later" to the backlog', () => {
@@ -65,6 +66,29 @@ describe('parseQuickAdd', () => {
 
   it('does not turn a single day word into an empty task', () => {
     expect(parse('tomorrow')).toMatchObject({ title: 'tomorrow', date: undefined });
+  });
+
+  it('leaves ordinary sentences alone', () => {
+    expect(parse('Review PR #482 for auth refactor')).toMatchObject({ title: 'Review PR #482 for auth refactor', channel: null });
+    expect(parse('#1 priority: ship invoice fix')).toMatchObject({ title: '#1 priority: ship invoice fix', channel: null });
+    expect(parse('Prep slides for Friday')).toMatchObject({ title: 'Prep slides for Friday', date: undefined });
+    expect(parse('Prep slides for tomorrow')).toMatchObject({ title: 'Prep slides for tomorrow', date: undefined });
+    expect(parse('Lunch with Friday')).toMatchObject({ title: 'Lunch with Friday', date: undefined });
+    expect(parse('Email him about the 2 hours')).toMatchObject({ planned: 120 });
+  });
+
+  it('reads durations written with a space or a longer unit', () => {
+    expect(parse('Standup 20 min')).toMatchObject({ title: 'Standup', planned: 20 });
+    expect(parse('Standup 45mins')).toMatchObject({ title: 'Standup', planned: 45 });
+    expect(parse('Workshop 2 hours #work')).toMatchObject({ title: 'Workshop', planned: 120, channel: 'work' });
+    expect(parse('Deep work 1.5hrs')).toMatchObject({ title: 'Deep work', planned: 90 });
+  });
+
+  it('reads a time range as a start and a length', () => {
+    expect(parse('Lunch @12:30-13:30')).toMatchObject({ title: 'Lunch', start: 750, planned: 60 });
+    expect(parse('Call @2-3pm')).toMatchObject({ start: 14 * 60, planned: 60 });
+    expect(parse('Call @9am-10:30am 30m')).toMatchObject({ start: 540, planned: 30 });
+    expect(parse('Odd @13:00-12:00').title).toBe('Odd @13:00-12:00');
   });
 
   it('lets tokens sit in any order', () => {

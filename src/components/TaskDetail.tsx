@@ -6,7 +6,7 @@ import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
 import { addDays, weekStart } from '../lib/dates';
 import { fmtClock, parseClock } from '../lib/time';
-import { AddLine, CheckCircle, DurationInput, EstimateChip, useTracked } from './bits';
+import { AddLine, CheckCircle, DurationInput, EstimateChip, useEscape, useTracked } from './bits';
 
 export function TaskDetail() {
   const id = useUI((s) => s.openTaskId);
@@ -40,6 +40,8 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
     panel.current?.focus();
   }, []);
 
+  useEscape(onClose);
+
   useEffect(() => {
     const el = titleRef.current;
     if (!el) return;
@@ -56,12 +58,6 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
         aria-modal="true"
         aria-label={`Task: ${task.title}`}
         tabIndex={-1}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            onClose();
-          }
-        }}
       >
         <header className="drawer-head">
           <CheckCircle checked={task.done} onChange={() => toggleDone(task.id)} label={task.done ? 'Mark as not done' : 'Mark as done'} size={24} />
@@ -126,6 +122,12 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
                     value={task.start === null ? '' : fmtClock(task.start)}
                     onChange={(e) => updateTask(task.id, { start: e.target.value ? parseClock(e.target.value) : null })}
                   />
+                  {task.start !== null && (
+                    <label className="check-row" title="A fixed time is never moved by Fill my day, does not count as work, and does not roll over.">
+                      <input type="checkbox" checked={Boolean(task.fixed)} onChange={(e) => updateTask(task.id, { fixed: e.target.checked })} />
+                      Fixed, like a meeting
+                    </label>
+                  )}
                 </dd>
               </>
             )}
@@ -144,25 +146,21 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
               />
             </dd>
 
-            {task.date !== null && (
-              <>
-                <dt>Repeats</dt>
-                <dd>
-                  <select
-                    className="field"
-                    aria-label="Repeats"
-                    value={task.repeat ?? ''}
-                    onChange={(e) => updateTask(task.id, { repeat: (e.target.value || null) as Repeat | null, repeatFrom: e.target.value ? task.date : null })}
-                  >
-                    <option value="">Never</option>
-                    <option value="daily">Every day</option>
-                    <option value="weekdays">Every weekday</option>
-                    <option value="weekly">Every week</option>
-                  </select>
-                  {task.repeat && <span className="muted hint">The next one appears when you finish this one.</span>}
-                </dd>
-              </>
-            )}
+            <dt>Repeats</dt>
+            <dd>
+              <select
+                className="field"
+                aria-label="Repeats"
+                value={task.repeat ?? ''}
+                onChange={(e) => updateTask(task.id, { repeat: (e.target.value || null) as Repeat | null, repeatFrom: e.target.value ? task.date : null })}
+              >
+                <option value="">Never</option>
+                <option value="daily">Every day</option>
+                <option value="weekdays">Every weekday</option>
+                <option value="weekly">Every week</option>
+              </select>
+              {task.repeat && <span className="muted hint">Upcoming days show a preview. Each one becomes real when you finish the one before it.</span>}
+            </dd>
 
             <dt>Channel</dt>
             <dd>

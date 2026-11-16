@@ -1,9 +1,11 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Clock, ListChecks, Play, Repeat, RotateCw, Square } from 'lucide-react';
+import { Clock, ListChecks, Pin, Play, Repeat, RotateCw, Square } from 'lucide-react';
 import type { Task } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
+import { deleteWithUndo } from '../actions';
+import { fmtMin } from '../lib/time';
 import { fmtClock } from '../lib/time';
 import { ChannelPill, CheckCircle, EstimateChip, useTracked } from './bits';
 
@@ -44,8 +46,8 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
       <div className="card-meta">
         <ChannelPill channelId={task.channelId} />
         {task.start !== null && (
-          <span className="meta">
-            <Clock size={12} />
+          <span className={`meta ${task.fixed ? 'meta-fixed' : ''}`} title={task.fixed ? 'Fixed time' : 'Planned time'}>
+            {task.fixed ? <Pin size={12} /> : <Clock size={12} />}
             {fmtClock(task.start)}
           </span>
         )}
@@ -75,6 +77,7 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
 
 export function TaskCard({ task }: { task: Task }) {
   const openTask = useUI((s) => s.openTask);
+  const toggleDone = useStore((s) => s.toggleDone);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { type: 'task', date: task.date },
@@ -89,18 +92,50 @@ export function TaskCard({ task }: { task: Task }) {
       {...attributes}
       {...listeners}
       role="button"
-      aria-label={`${task.title}. Press Enter to open, Space to move.`}
+      aria-label={`${task.title}. Enter opens, X marks done, Space moves, Delete removes.`}
       onClick={() => openTask(task.id)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && e.target === e.currentTarget) {
+        // Keys pressed on a button inside the card belong to that button.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter') {
           e.preventDefault();
           openTask(task.id);
-          return;
+        } else if (e.key === 'x') {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleDone(task.id);
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          deleteWithUndo(task.id);
+        } else {
+          listeners?.onKeyDown?.(e);
         }
-        listeners?.onKeyDown?.(e);
       }}
     >
       <TaskCardView task={task} />
+    </li>
+  );
+}
+
+/** A not-yet-real occurrence of a repeating task, shown on the days it will come up. */
+export function GhostCard({ task }: { task: Task }) {
+  return (
+    <li className="card card-ghost" title="This repeating task appears here once the current one is finished">
+      <div className="card-top">
+        <Repeat size={14} className="ghost-icon" />
+        <span className="card-title">{task.title}</span>
+      </div>
+      <div className="card-meta">
+        <ChannelPill channelId={task.channelId} />
+        {task.fixed && task.start !== null && (
+          <span className="meta">
+            <Pin size={12} />
+            {fmtClock(task.start)}
+          </span>
+        )}
+        <span className="spacer" />
+        {task.planned !== null && <span className="chip">{fmtMin(task.planned)}</span>}
+      </div>
     </li>
   );
 }

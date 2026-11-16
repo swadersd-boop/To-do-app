@@ -18,6 +18,8 @@ export function addFromText(text: string, fallbackDate: ISODate | null, atTop = 
       planned: parsed.planned,
       channelId: parsed.channel ? store.channelByName(parsed.channel) : null,
       start: parsed.start,
+      // A time someone typed is a commitment. A time from dragging or "Fill my day" is a plan.
+      fixed: parsed.start !== null && date !== null,
     },
     atTop,
   );

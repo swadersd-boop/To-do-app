@@ -163,15 +163,24 @@ export function Insights() {
   const tasks = useStore((s) => s.tasks);
   const channels = useStore((s) => s.channels);
   const today = useUI((s) => s.today);
+  const days = useStore((s) => s.days);
   const h = useMemo(() => honesty(tasks), [tasks]);
   const week = useMemo(
     () =>
       Array.from({ length: 7 }, (_, i) => {
         const date = addDays(today, i - 6);
         const list = tasks.filter((t) => t.date === date);
-        return { date, done: list.filter((t) => t.done).length, total: list.length, planned: plannedTotal(list), actual: actualTotal(list) };
+        const log = days[date];
+        // Tasks that were carried to a later day still count as planned for this one.
+        return {
+          date,
+          done: list.filter((t) => t.done).length,
+          total: list.length + (log?.carried ?? 0),
+          planned: plannedTotal(list) + (log?.carriedMin ?? 0),
+          actual: actualTotal(list),
+        };
       }),
-    [tasks, today],
+    [tasks, days, today],
   );
 
   return (
@@ -256,6 +265,10 @@ const KEYS: [string, string][] = [
   ['B', 'Show or hide the backlog'],
   ['L', 'Show or hide the timeline'],
   ['?', 'This list'],
+  ['Enter', 'On a task: open it'],
+  ['X', 'On a task: mark it done'],
+  ['Space', 'On a task: pick it up, move with the arrow keys, drop with Space'],
+  ['Delete', 'On a task: remove it'],
 ];
 
 export function Help() {
@@ -284,10 +297,10 @@ export function Help() {
           <code>#work</code> files it under a channel, and creates the channel if it is new.
         </li>
         <li>
-          <code>@14:30</code> or <code>@2pm</code> puts it on the timeline.
+          <code>@14:30</code>, <code>@2pm</code> or <code>@12:30-13:30</code> gives it a fixed time, like a meeting. "Fill my day" never moves it.
         </li>
         <li>
-          <code>today</code>, <code>tomorrow</code>, a weekday or <code>later</code> as the last word picks the day.
+          <code>today</code>, <code>tomorrow</code>, <code>fri</code>, <code>on Friday</code> or <code>later</code> as the last word picks the day.
         </li>
       </ul>
     </Dialog>

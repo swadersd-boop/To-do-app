@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, layoutBlocks, moveTask, nextOccurrence, rollover, tasksOn } from '../src/lib/model';
+import { autoSchedule, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange } from '../src/lib/model';
 import { forecast, honesty } from '../src/lib/stats';
 import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
@@ -135,14 +135,64 @@ describe('autoSchedule', () => {
 
   it('leaves out what does not fit before the end of the day', () => {
     const day = [task({ id: 'big', order: 0, planned: 240 }), task({ id: 'small', order: 1, planned: 30 })];
-    expect(autoSchedule(day, 17 * 60, 19 * 60)).toEqual({ small: 17 * 60 });
+    expect(autoSchedule(day, 17 * 60, 19 * 60)).toEqual({ big: null, small: 17 * 60 });
   });
 
   it('never overlaps anything it places', () => {
     const day = Array.from({ length: 8 }, (_, i) => task({ id: `k${i}`, order: i, planned: 10 + i * 13 }));
     const placed = autoSchedule(day, 8 * 60, 22 * 60);
-    const spans = day.map((t) => [placed[t.id], placed[t.id] + t.planned!]).sort((p, q) => p[0] - q[0]);
+    const spans = day.map((t) => [placed[t.id]!, placed[t.id]! + t.planned!]).sort((p, q) => p[0] - q[0]);
     for (let i = 1; i < spans.length; i += 1) expect(spans[i][0]).toBeGreaterThanOrEqual(spans[i - 1][1]);
+  });
+});
+
+describe('fixed commitments', () => {
+  it('are never moved by scheduling, and flexible tasks flow around them', () => {
+    const day = [
+      task({ id: 'standup', order: 0, planned: 15, start: 570, fixed: true }),
+      task({ id: 'slipped', order: 1, planned: 60, start: 540 }),
+      task({ id: 'ahead', order: 2, planned: 30, start: 900 }),
+      task({ id: 'loose', order: 3, planned: 45 }),
+      task({ id: 'one-on-one', order: 4, planned: 30, start: 840, fixed: true }),
+    ];
+    // It is 11:30. The 09:00 block slipped, the 15:00 block is still ahead.
+    const plan = autoSchedule(day, 690, 19 * 60);
+    expect(plan).toEqual({ slipped: 690, loose: 750 });
+  });
+
+  it('keep their time when moved to another day, and lose it in the backlog', () => {
+    const meeting = task({ id: 'm', start: 840, fixed: true });
+    expect(moveTask([meeting], 'm', '2026-11-18', 0)[0]).toMatchObject({ date: '2026-11-18', start: 840, fixed: true });
+    expect(moveTask([meeting], 'm', null, 0)[0]).toMatchObject({ date: null, start: null, fixed: false });
+  });
+
+  it('do not roll over', () => {
+    const missed = task({ id: 'missed', date: '2026-11-15', start: 1200, fixed: true });
+    const todo = task({ id: 'todo', date: '2026-11-15' });
+    const out = rollover([missed, todo], '2026-11-16');
+    expect(out.find((t) => t.id === 'missed')!.date).toBe('2026-11-15');
+    expect(out.find((t) => t.id === 'todo')!.date).toBe('2026-11-16');
+  });
+});
+
+describe('timelineRange', () => {
+  it('stretches to show early and late timeboxes', () => {
+    const day = [task({ start: 450, planned: 30 }), task({ start: 20 * 60, planned: 90 }), task({})];
+    expect(timelineRange(day, 8, 19)).toEqual({ start: 7, end: 22 });
+    expect(timelineRange([task({ start: 600 })], 8, 19)).toEqual({ start: 8, end: 19 });
+  });
+});
+
+describe('occursOn', () => {
+  const standup = task({ date: '2026-11-16', repeat: 'weekdays', repeatFrom: '2026-11-16' });
+  it('previews a repeating task on the days it will come up', () => {
+    expect(occursOn(standup, '2026-11-16')).toBe(false);
+    expect(occursOn(standup, '2026-11-17')).toBe(true);
+    expect(occursOn(standup, '2026-11-21')).toBe(false);
+    expect(occursOn({ ...standup, repeat: 'weekly' }, '2026-11-23')).toBe(true);
+    expect(occursOn({ ...standup, repeat: 'weekly' }, '2026-11-24')).toBe(false);
+    expect(occursOn({ ...standup, done: true }, '2026-11-17')).toBe(false);
+    expect(occursOn(task({}), '2026-11-17')).toBe(false);
   });
 });
 

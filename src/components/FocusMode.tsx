@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import { useUI } from '../ui';
 import { tasksOn } from '../lib/model';
 import { fmtMin, fmtStopwatch } from '../lib/time';
-import { AddLine, ChannelPill, CheckCircle, useTracked } from './bits';
+import { AddLine, ChannelPill, CheckCircle, useEscape, useTracked } from './bits';
 
 export function FocusMode() {
   const id = useUI((s) => s.focusTaskId);
@@ -19,6 +19,7 @@ export function FocusMode() {
   const { seconds, running } = useTracked(task?.id ?? '', task?.actualSec ?? 0);
 
   const close = () => useUI.getState().openModal(null);
+  useEscape(close);
 
   useEffect(() => {
     panel.current?.focus();
@@ -69,9 +70,6 @@ export function FocusMode() {
       aria-modal="true"
       aria-label={`Focus: ${task.title}`}
       tabIndex={-1}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') close();
-      }}
     >
       <button type="button" className="icon-btn focus-close" onClick={close} aria-label="Leave focus mode">
         <X size={20} />
@@ -97,7 +95,7 @@ export function FocusMode() {
 
         <div className="row focus-actions">
           {running ? (
-            <button type="button" className="btn" onClick={stopTimer}>
+            <button type="button" className="btn" onClick={() => stopTimer()}>
               <Pause size={15} />
               Pause
             </button>

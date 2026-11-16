@@ -48,4 +48,8 @@ export function forecast(plan: Task[], history: Task[]): number | null {
 }
 
 export const plannedTotal = (tasks: Task[]) => tasks.reduce((sum, t) => sum + (t.planned ?? 0), 0);
+/** Planned minutes of flexible work, which is what counts against the day's capacity. */
+export const workTotal = (tasks: Task[]) => plannedTotal(tasks.filter((t) => !t.fixed));
+/** Planned minutes taken by fixed commitments such as meetings. */
+export const fixedTotal = (tasks: Task[]) => plannedTotal(tasks.filter((t) => t.fixed));
 export const actualTotal = (tasks: Task[]) => tasks.reduce((sum, t) => sum + t.actualSec / 60, 0);

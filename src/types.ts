@@ -37,6 +37,13 @@ export interface Task {
   repeatFrom?: ISODate | null;
   /** The occurrence created when this one was finished, so un-finishing can take it back. */
   nextId?: string | null;
+  /**
+   * A fixed commitment, like a meeting. Its time is never moved by "Fill my day",
+   * it does not count as work against the day's capacity, and it does not roll over.
+   */
+  fixed?: boolean;
+  /** One of the example tasks shown on first run. */
+  example?: boolean;
 }
 
 export interface Channel {
@@ -58,6 +65,9 @@ export interface DayLog {
   plannedAt?: string;
   shutdownAt?: string;
   reflection?: string;
+  /** Unfinished tasks that were carried from this day to a later one, and their planned minutes. */
+  carried?: number;
+  carriedMin?: number;
 }
 
 export interface Settings {
@@ -75,6 +85,8 @@ export interface Timer {
   taskId: string;
   /** Epoch milliseconds. */
   startedAt: number;
+  /** When the person last confirmed they are still working, for long-running timers. */
+  checkedAt?: number;
 }
 
 /** Everything that is saved, exported and imported. */

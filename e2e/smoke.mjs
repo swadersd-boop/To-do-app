@@ -186,6 +186,57 @@ assert.equal(await cardIn(tomorrow, 'Stretch').count(), 0, 'un-finishing removes
 await cardIn(today, 'Stretch').getByRole('checkbox').click();
 await cardIn(tomorrow, 'Stretch').waitFor();
 
+// 12c. Ordinary sentences survive quick add, and the first keystroke after N is not lost.
+await page.keyboard.press('n');
+await page.keyboard.type('Review PR #482 for Friday 20 min');
+await page.keyboard.press('Enter');
+const pr = cardIn(today, 'Review PR #482 for Friday');
+await pr.waitFor();
+assert.match(await pr.innerText(), /20m/, 'a duration with a space is read');
+await page.keyboard.press('Escape');
+
+// 12d. A fixed commitment holds its time when the rest of the day is replanned.
+const meeting = page.locator('.block.is-fixed', { hasText: 'Reply to supplier emails' });
+const meetingTime = await meeting.getAttribute('aria-label');
+await page.getByRole('button', { name: 'Fill my day' }).click();
+await page.locator('.block', { hasText: 'Review PR #482' }).waitFor();
+assert.equal(await meeting.getAttribute('aria-label'), meetingTime, 'the fixed block did not move');
+await page.getByRole('button', { name: 'Undo' }).click();
+assert.equal(await page.locator('.block', { hasText: 'Review PR #482' }).count(), 0, 'scheduling can be undone');
+
+// 12e. Keyboard: X on a focused card marks it done, Space on its checkbox does too, Escape always closes the drawer.
+await pr.focus();
+await page.keyboard.press('x');
+assert.ok(await pr.locator('.card.is-done').count(), 'X marks the focused card done');
+const hover = cardIn(today, 'Hover a card and press play');
+await hover.getByRole('checkbox').focus();
+await page.keyboard.press('Space');
+assert.ok(await hover.locator('.card.is-done').count(), 'Space on the checkbox completes the task');
+await hover.getByRole('checkbox').click();
+await hover.click();
+await page.getByLabel('Task title').click();
+await page.keyboard.press('Enter');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(250);
+assert.equal(await page.locator('.drawer').count(), 0, 'Escape closes the drawer after Enter in the title');
+
+// 12f. A timer left running asks before it counts hours nobody worked.
+await hover.hover();
+await hover.getByRole('button', { name: 'Start focus' }).click();
+await page.locator('.focus-clock').waitFor();
+await page.clock.fastForward('03:00:00');
+await page.getByRole('button', { name: 'Leave focus mode' }).click();
+const nag = page.getByRole('alert');
+await nag.waitFor();
+await shot(page, '11b-timer-nag');
+await nag.getByRole('button', { name: /No, stop at/ }).click();
+assert.match(await hover.innerText(), /55m \//, 'only the time up to the question was counted');
+
+// 12g. The example tasks go away in one click.
+await page.getByRole('button', { name: 'Remove the examples' }).click();
+assert.equal(await cardIn(today, 'Hover a card').count(), 0, 'examples removed');
+await cardIn(today, 'Write the launch brief').waitFor();
+
 // 13. Other panels open without errors.
 for (const [name, file] of [
   ['Insights', '12-insights'],

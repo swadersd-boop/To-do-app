@@ -6,8 +6,8 @@ import { useUI } from '../ui';
 import { addFromText, copyText, deleteWithUndo } from '../actions';
 import { tasksOn } from '../lib/model';
 import { addDays, longDate, weekStart } from '../lib/dates';
-import { fmtMin } from '../lib/time';
-import { forecast, plannedTotal } from '../lib/stats';
+import { fmtClock, fmtMin } from '../lib/time';
+import { fixedTotal, forecast, workTotal } from '../lib/stats';
 import { planText } from '../lib/summary';
 import { encodePlan } from '../lib/share';
 import { AddLine, ChannelPill, Dialog, EstimateChip, LoadBar } from './bits';
@@ -60,26 +60,29 @@ export function PlanRitual() {
   const open = todays.filter((t) => !t.done);
   const backlog = useMemo(() => tasksOn(tasks, null), [tasks]);
   const leftovers = useMemo(
-    () => tasks.filter((t) => !t.done && ((t.date === today && t.rolled > 0) || (t.date !== null && t.date < today))),
+    () => tasks.filter((t) => !t.done && !t.fixed && ((t.date === today && t.rolled > 0) || (t.date !== null && t.date < today))),
     [tasks, today],
   );
   const objectives = allObjectives.filter((o) => o.weekStart === weekStart(today) && !o.done);
 
-  const planned = plannedTotal(open);
+  const planned = workTotal(open);
+  const fixed = fixedTotal(open);
   const missing = open.filter((t) => t.planned === null).length;
-  const likely = forecast(open, tasks);
+  const likely = forecast(open.filter((t) => !t.fixed), tasks);
   const over = planned - settings.capacityMin;
   const tomorrow = addDays(today, 1);
   const summary = planText(today, open, channels, intention);
 
   const finish = () => {
     setDay(today, { plannedAt: new Date().toISOString(), intention: intention.trim() });
-    if (fill) {
-      const now = new Date();
-      autoSchedule(today, now.getHours() * 60 + now.getMinutes());
-    }
+    const now = new Date();
+    const left = fill ? autoSchedule(today, now.getHours() * 60 + now.getMinutes()).left : 0;
     close();
-    notify('Day planned. Go do the first thing.');
+    notify(
+      left === 0
+        ? 'Day planned. Go do the first thing.'
+        : `Day planned, but ${left} task${left === 1 ? ' does' : 's do'} not fit before ${fmtClock(settings.dayEnd * 60)} and ${left === 1 ? 'has' : 'have'} no time.`,
+    );
   };
 
   const share = async () => {
@@ -87,7 +90,7 @@ export function PlanRitual() {
       name: settings.name,
       date: today,
       intention: intention.trim(),
-      tasks: open.map((t) => {
+      tasks: todays.map((t) => {
         const c = channels.find((x) => x.id === t.channelId);
         return { title: t.title, planned: t.planned, done: t.done, channel: c?.name ?? null, color: c?.color ?? null, start: t.start };
       }),
@@ -217,7 +220,10 @@ export function PlanRitual() {
           <div className="fit">
             <div className="fit-num">
               <strong className={over > 0 ? 'is-over' : ''}>{fmtMin(planned)}</strong>
-              <span>planned of {fmtMin(settings.capacityMin)}</span>
+              <span>
+                of work planned, of {fmtMin(settings.capacityMin)}
+                {fixed > 0 && `, plus ${fmtMin(fixed)} of fixed commitments`}
+              </span>
             </div>
             <LoadBar planned={planned} capacity={settings.capacityMin} />
             <p className={`fit-verdict ${over > 0 ? 'is-over' : ''}`}>

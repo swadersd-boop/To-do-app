@@ -26,6 +26,8 @@ export interface NewTask {
   channelId?: string | null;
   start?: number | null;
   notes?: string;
+  fixed?: boolean;
+  example?: boolean;
 }
 
 function makeTask(input: NewTask, order: number): Task {
@@ -45,6 +47,8 @@ function makeTask(input: NewTask, order: number): Task {
     subtasks: [],
     rolled: 0,
     createdAt: new Date().toISOString(),
+    fixed: input.date !== null && Boolean(input.fixed),
+    example: input.example,
   };
 }
 
@@ -70,7 +74,7 @@ export function seed(today: ISODate): PlannerData {
     const key = String(t.date);
     const order = counts.get(key) ?? 0;
     counts.set(key, order + 1);
-    return makeTask(t, order);
+    return makeTask({ ...t, example: true }, order);
   });
   const objectives: Objective[] = [
     { id: uid(), weekStart: weekStart(today), title: 'Finish every day with a shutdown', done: false },
@@ -88,15 +92,20 @@ interface Actions {
   /** Moves a task to the end of a day or the backlog. */
   sendTo: (id: string, date: ISODate | null) => void;
   rollover: (today: ISODate) => void;
-  autoSchedule: (date: ISODate, from: number) => number;
+  /** Gives flexible tasks a time. Returns how many got one and how many did not fit. */
+  autoSchedule: (date: ISODate, from: number) => { placed: number; left: number };
   clearSchedule: (date: ISODate) => void;
+  removeExamples: () => void;
 
   addSubtask: (taskId: string, title: string) => void;
   updateSubtask: (taskId: string, subId: string, patch: Partial<Subtask>) => void;
   deleteSubtask: (taskId: string, subId: string) => void;
 
   startTimer: (id: string) => void;
-  stopTimer: () => void;
+  /** Stops the timer. Pass `endAt` to count only the time up to that moment. */
+  stopTimer: (endAt?: number) => void;
+  /** Records that the person is still working, which quiets the long-timer prompt. */
+  confirmTimer: () => void;
 
   /** Finds a channel by name, or creates it. Returns its id. */
   channelByName: (name: string) => string;
@@ -126,11 +135,14 @@ const slug = (name: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-|-$/g, '');
 
+/** No single sitting is longer than this. A timer left on overnight stops counting here. */
+export const MAX_SESSION_SEC = 8 * 3600;
+
 /** Adds the running timer's elapsed time to its task. */
 function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 'tasks' | 'timer'> {
   if (!state.timer) return { tasks: state.tasks, timer: null };
   const { taskId, startedAt } = state.timer;
-  const elapsed = Math.max(0, Math.round((now - startedAt) / 1000));
+  const elapsed = Math.min(MAX_SESSION_SEC, Math.max(0, Math.round((now - startedAt) / 1000)));
   return {
     tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, actualSec: t.actualSec + elapsed } : t)),
     timer: null,
@@ -155,12 +167,22 @@ export const useStore = create<Store>()(
         set((s) => {
           const current = s.tasks.find((t) => t.id === id);
           if (!current) return s;
-          let tasks = s.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t));
+          // A commitment without a time is no longer fixed.
+          const merge = (t: Task): Task => {
+            const next = { ...t, ...patch };
+            return next.fixed && next.start === null ? { ...next, fixed: false } : next;
+          };
+          let tasks = s.tasks.map((t) => (t.id === id ? merge(t) : t));
           // A change of day through a form field lands at the end of that day.
           if (patch.date !== undefined && patch.date !== current.date) {
             tasks = tasks.map((t) =>
               t.id === id
-                ? { ...t, order: nextOrder(s.tasks, patch.date!), start: patch.date === null ? null : (patch.start ?? null) }
+                ? {
+                    ...t,
+                    order: nextOrder(s.tasks, patch.date!),
+                    start: patch.date === null ? null : (patch.start ?? (current.fixed ? current.start : null)),
+                    fixed: patch.date === null ? false : t.fixed,
+                  }
                 : t,
             );
           }
@@ -194,11 +216,23 @@ export const useStore = create<Store>()(
           }
 
           let nextId: string | null = null;
-          if (task.repeat && task.date) {
+          if (task.repeat) {
             const today = todayISO();
-            const date = nextOccurrence(task.repeat, task.repeatFrom ?? task.date, task.date > today ? task.date : today);
+            // A repeating task parked in the backlog still repeats, counted from today.
+            const due = task.date ?? today;
+            const date = nextOccurrence(task.repeat, task.repeatFrom ?? due, due > today ? due : today);
+            // Only a fixed commitment keeps its hour. A time picked by "Fill my day" was for that day alone.
+            const input: NewTask = {
+              title: task.title,
+              date,
+              planned: task.planned,
+              channelId: task.channelId,
+              notes: task.notes,
+              start: task.fixed ? task.start : null,
+              fixed: task.fixed,
+            };
             const next: Task = {
-              ...makeTask({ title: task.title, date, planned: task.planned, channelId: task.channelId, notes: task.notes, start: task.start }, nextOrder(tasks, date)),
+              ...makeTask(input, nextOrder(tasks, date)),
               subtasks: task.subtasks.map((x) => ({ ...x, id: uid(), done: false })),
               repeat: task.repeat,
               repeatFrom: date,
@@ -217,18 +251,32 @@ export const useStore = create<Store>()(
       rollover: (today) =>
         set((s) => {
           const tasks = rollover(s.tasks, today);
-          return tasks === s.tasks ? s : { tasks };
+          if (tasks === s.tasks) return s;
+          // Note on each day what left it unfinished, so the record of that day stays honest.
+          const days = { ...s.days };
+          for (const before of s.tasks) {
+            const after = tasks.find((t) => t.id === before.id);
+            if (!before.date || !after || after.date === before.date) continue;
+            const log = days[before.date] ?? {};
+            days[before.date] = { ...log, carried: (log.carried ?? 0) + 1, carriedMin: (log.carriedMin ?? 0) + (before.planned ?? 0) };
+          }
+          return { tasks, days };
         }),
 
       autoSchedule: (date, from) => {
         const s = get();
-        const placed = autoSchedule(tasksOn(s.tasks, date), Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60);
-        set({ tasks: s.tasks.map((t) => (placed[t.id] === undefined ? t : { ...t, start: placed[t.id] })) });
-        return Object.keys(placed).length;
+        const plan = autoSchedule(tasksOn(s.tasks, date), Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60);
+        set({ tasks: s.tasks.map((t) => (plan[t.id] === undefined ? t : { ...t, start: plan[t.id] })) });
+        const starts = Object.values(plan);
+        return { placed: starts.filter((v) => v !== null).length, left: starts.filter((v) => v === null).length };
       },
 
       clearSchedule: (date) =>
-        set((s) => ({ tasks: s.tasks.map((t) => (t.date === date && !t.done && t.start !== null ? { ...t, start: null } : t)) })),
+        set((s) => ({
+          tasks: s.tasks.map((t) => (t.date === date && !t.done && !t.fixed && t.start !== null ? { ...t, start: null } : t)),
+        })),
+
+      removeExamples: () => set((s) => ({ tasks: s.tasks.filter((t) => !t.example) })),
 
       addSubtask: (taskId, title) =>
         set((s) => ({
@@ -255,7 +303,9 @@ export const useStore = create<Store>()(
           return { tasks: settleTimer(s).tasks, timer: { taskId: id, startedAt: Date.now() } };
         }),
 
-      stopTimer: () => set((s) => settleTimer(s)),
+      stopTimer: (endAt) => set((s) => settleTimer(s, endAt)),
+
+      confirmTimer: () => set((s) => (s.timer ? { timer: { ...s.timer, checkedAt: Date.now() } } : s)),
 
       channelByName: (name) => {
         const wanted = slug(name);
@@ -302,7 +352,7 @@ export const useStore = create<Store>()(
 
       importData: (data) => set({ ...data, settings: { ...DEFAULT_SETTINGS, ...data.settings } }),
 
-      reset: () => set({ ...seed(todayISO()) }),
+      reset: () => set({ ...seed(todayISO()), tasks: [], objectives: [] }),
     }),
     {
       name: STORAGE_KEY,

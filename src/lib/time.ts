@@ -34,14 +34,14 @@ export function parseClock(text: string): number | null {
   return h * 60 + min;
 }
 
-/** Reads a typed duration ("45", "45m", "1h", "1h30", "1.5h") as minutes. */
+/** Reads a typed duration ("45", "45m", "45mins", "1h", "1hr", "1h30", "1.5h") as minutes. */
 export function parseDuration(text: string): number | null {
   const t = text.trim().toLowerCase().replace(/\s+/g, '');
   if (!t) return null;
   if (/^\d+$/.test(t)) return Number(t);
-  const hours = /^(\d+(?:[.,]\d+)?)h(?:(\d{1,2})m?)?$/.exec(t);
+  const hours = /^(\d+(?:[.,]\d+)?)(?:hours?|hrs?|h)(?:(\d{1,2})(?:minutes?|mins?|m)?)?$/.exec(t);
   if (hours) return Math.round(Number(hours[1].replace(',', '.')) * 60) + Number(hours[2] ?? 0);
-  const mins = /^(\d+)m(?:in)?$/.exec(t);
+  const mins = /^(\d+)(?:minutes?|mins?|m)$/.exec(t);
   if (mins) return Number(mins[1]);
   return null;
 }

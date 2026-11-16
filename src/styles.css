@@ -334,6 +334,11 @@ textarea.field {
   color: var(--warn);
 }
 
+.meta-fixed {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -559,6 +564,40 @@ textarea::placeholder {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  flex: none;
+  padding: 8px 22px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.nag {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  width: min(680px, calc(100vw - 24px));
+  padding: 12px 16px;
+  border: 1px solid var(--warn);
+  border-radius: 12px;
+  background: var(--warn-soft);
+  box-shadow: var(--shadow-lift);
+  translate: -50% 0;
+}
+
+.nag span {
+  flex: 1 1 260px;
 }
 
 .shell {
@@ -792,6 +831,46 @@ textarea::placeholder {
   margin: 8px 0 0 29px;
 }
 
+/* A preview of a repeating task on a day it has not reached yet. */
+.card-ghost {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+}
+
+.ghost-icon {
+  flex: none;
+  margin: 3px 3px 0;
+  color: var(--ink-3);
+}
+
+.recap {
+  margin: 0 4px 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.recap summary {
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.recap p {
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.recap p span {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 /* ---------- Sidebar ---------- */
 
 .sidebar {
@@ -960,6 +1039,16 @@ li:focus-within > .row-x {
   gap: 8px;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+.block.is-fixed {
+  background: var(--accent-soft);
+}
+
+.block-pin {
+  flex: none;
+  margin-right: 4px;
+  vertical-align: -1px;
 }
 
 .block.is-short .block-x {

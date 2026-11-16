@@ -1,5 +1,5 @@
 import type { ISODate, Repeat, Task } from '../types';
-import { addDays, isWeekend } from './dates';
+import { addDays, diffDays, isWeekend } from './dates';
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -14,7 +14,7 @@ export function tasksOn(tasks: Task[], date: ISODate | null): Task[] {
 /**
  * Moves a task to `index` within a day or the backlog, renumbering that list.
  * A task that changes day loses its timebox, because the slot belonged to the
- * old day.
+ * old day. A fixed commitment keeps its time.
  */
 export function moveTask(tasks: Task[], id: string, date: ISODate | null, index: number): Task[] {
   const task = tasks.find((t) => t.id === id);
@@ -25,18 +25,23 @@ export function moveTask(tasks: Task[], id: string, date: ISODate | null, index:
   return tasks.map((t) => {
     const next = order.get(t.id);
     if (next === undefined) return t;
-    if (t.id === id) return { ...t, date, order: next, start: t.date === date ? t.start : null };
+    if (t.id === id) {
+      const keepsTime = t.date === date || (t.fixed && date !== null);
+      return { ...t, date, order: next, start: keepsTime ? t.start : null, fixed: date === null ? false : t.fixed };
+    }
     return next === t.order ? t : { ...t, order: next };
   });
 }
 
 /**
  * Carries unfinished tasks from past days over to today. They go to the top
- * of today's list, oldest first. Returns the same array when nothing moved.
+ * of today's list, oldest first. Fixed commitments stay on their own day: a
+ * missed meeting is not something to do tomorrow. Returns the same array when
+ * nothing moved.
  */
 export function rollover(tasks: Task[], today: ISODate): Task[] {
   const stale = tasks
-    .filter((t) => t.date !== null && t.date < today && !t.done)
+    .filter((t) => t.date !== null && t.date < today && !t.done && !t.fixed)
     .sort((a, b) => (a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : a.order - b.order));
   if (stale.length === 0) return tasks;
   const order = new Map<string, number>();
@@ -51,20 +56,25 @@ export function rollover(tasks: Task[], today: ISODate): Task[] {
 }
 
 /**
- * Finds a time for every unfinished task of a day that has none yet. Tasks
- * are placed in list order into the gaps between existing timeboxes, starting
- * at `from`. Anything that does not fit before `until` stays unscheduled.
+ * Plans the flexible part of a day. Unfinished tasks with no time yet, and
+ * tasks whose time has already slipped past `from`, are placed in list order
+ * into the gaps, starting at `from`. Fixed commitments, finished tasks and
+ * timeboxes that are still ahead stay where they are.
+ *
+ * Returns a start for every task it handled: a number, or null when the task
+ * did not fit before `until`.
  */
-export function autoSchedule(day: Task[], from: number, until: number): Record<string, number> {
+export function autoSchedule(day: Task[], from: number, until: number): Record<string, number | null> {
+  const movable = (t: Task) => !t.done && !t.fixed && (t.start === null || t.start < from);
   const busy = day
-    .filter((t) => t.start !== null)
+    .filter((t) => t.start !== null && !movable(t))
     .map((t) => ({ start: t.start!, end: t.start! + (t.planned ?? DEFAULT_BLOCK) }))
     .sort((a, b) => a.start - b.start);
-  const placed: Record<string, number> = {};
+  const placed: Record<string, number | null> = {};
   let cursor = Math.ceil(from / 15) * 15;
 
   for (const task of day) {
-    if (task.done || task.start !== null) continue;
+    if (!movable(task)) continue;
     const length = task.planned ?? DEFAULT_BLOCK;
     let start = cursor;
     for (const slot of busy) {
@@ -72,7 +82,10 @@ export function autoSchedule(day: Task[], from: number, until: number): Record<s
       if (slot.start >= start + length) break;
       start = Math.ceil(slot.end / 15) * 15;
     }
-    if (start + length > until) continue;
+    if (start + length > until) {
+      placed[task.id] = null;
+      continue;
+    }
     placed[task.id] = start;
     busy.push({ start, end: start + length });
     busy.sort((a, b) => a.start - b.start);
@@ -80,6 +93,26 @@ export function autoSchedule(day: Task[], from: number, until: number): Record<s
     cursor = Math.ceil((start + length) / 15) * 15;
   }
   return placed;
+}
+
+/** The hours the timeline has to show so that no timebox of the day is cut off. */
+export function timelineRange(day: Task[], dayStart: number, dayEnd: number): { start: number; end: number } {
+  let start = dayStart;
+  let end = dayEnd;
+  for (const t of day) {
+    if (t.start === null) continue;
+    start = Math.min(start, Math.floor(t.start / 60));
+    end = Math.max(end, Math.min(24, Math.ceil((t.start + (t.planned ?? DEFAULT_BLOCK)) / 60)));
+  }
+  return { start, end };
+}
+
+/** Whether an unfinished repeating task will come up again on `date`, a day after its current one. */
+export function occursOn(task: Task, date: ISODate): boolean {
+  if (!task.repeat || task.done || task.date === null || date <= task.date) return false;
+  if (task.repeat === 'daily') return true;
+  if (task.repeat === 'weekdays') return !isWeekend(date);
+  return diffDays(date, task.repeatFrom ?? task.date) % 7 === 0;
 }
 
 /** Splits overlapping timeboxes into side-by-side columns. */

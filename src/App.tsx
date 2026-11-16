@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   DndContext,
   DragOverlay,
@@ -34,7 +35,8 @@ import { useUI } from './ui';
 import { addDays, fromISO, todayISO } from './lib/dates';
 import { tasksOn } from './lib/model';
 import { isShareHash } from './lib/share';
-import { snap } from './lib/time';
+import { fmtMin, snap } from './lib/time';
+import { useNow } from './components/bits';
 import { Board } from './components/Board';
 import { Sidebar } from './components/Sidebar';
 import { PX_PER_MIN, Timeline } from './components/Timeline';
@@ -129,6 +131,31 @@ function Toast() {
   );
 }
 
+/** Asks about a timer that has run far longer than the task was meant to take. */
+function TimerNag() {
+  const timer = useStore((s) => s.timer);
+  const task = useStore((s) => s.tasks.find((t) => t.id === s.timer?.taskId));
+  const now = useNow(20_000, Boolean(timer));
+  if (!timer || !task) return null;
+  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
+  const dueAt = timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
+  if (now < dueAt) return null;
+  const { confirmTimer, stopTimer } = useStore.getState();
+  return (
+    <div className="nag" role="alert">
+      <span>
+        The timer on "{task.title}" has been running for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
+      </span>
+      <button type="button" className="btn" onClick={confirmTimer}>
+        Still working
+      </button>
+      <button type="button" className="btn" onClick={() => stopTimer(dueAt)} title="Stops the timer and drops the time since this question came up">
+        No, stop at {fmtMin((dueAt - timer.startedAt) / 60_000)}
+      </button>
+    </div>
+  );
+}
+
 function Header({ onFocus }: { onFocus: () => void }) {
   const ui = useUI();
   const log = useStore((s) => s.days[ui.today]);
@@ -154,7 +181,7 @@ function Header({ onFocus }: { onFocus: () => void }) {
         <button type="button" className="icon-btn" onClick={() => ui.setBoardStart(addDays(ui.boardStart, -1))} aria-label="Earlier">
           <ChevronLeft size={18} />
         </button>
-        <button type="button" className="btn btn-quiet" onClick={ui.goToday} disabled={ui.boardStart === ui.today && ui.selectedDay === ui.today}>
+        <button type="button" className="btn btn-quiet" onClick={ui.goToday}>
           Today
         </button>
         <button type="button" className="icon-btn" onClick={() => ui.setBoardStart(addDays(ui.boardStart, 1))} aria-label="Later">
@@ -208,6 +235,9 @@ function Planner() {
   const intention = useStore((s) => s.days[ui.today]?.intention);
   const [active, setActive] = useState<Task | null>(null);
   const before = useRef<Task[] | null>(null);
+  const overTimeline = useRef(false);
+  const boardScroll = useRef(0);
+  const hasExamples = useStore((s) => s.tasks.some((t) => t.example));
   const todayAdd = useRef<HTMLInputElement>(null);
 
   useTheme();
@@ -243,8 +273,9 @@ function Planner() {
       switch (e.key) {
         case 'n':
           return run(() => {
-            state.goToday();
-            requestAnimationFrame(() => todayAdd.current?.focus());
+            // Render today's column right away, so the very next keystroke lands in the box.
+            flushSync(() => state.goToday());
+            todayAdd.current?.focus();
           });
         case 'p':
           return run(() => state.openModal('plan'));
@@ -275,6 +306,8 @@ function Planner() {
   const onDragStart = (e: DragStartEvent) => {
     const tasks = useStore.getState().tasks;
     before.current = tasks;
+    overTimeline.current = false;
+    boardScroll.current = document.querySelector('.board')?.scrollLeft ?? 0;
     setActive(tasks.find((t) => t.id === e.active.id) ?? null);
   };
 
@@ -286,6 +319,7 @@ function Planner() {
   const onDragOver = (e: DragOverEvent) => {
     const { active: dragged, over } = e;
     const kind = over?.data.current?.type as string | undefined;
+    overTimeline.current = kind === 'timeline';
     if (!over || kind === 'timeline' || kind === undefined) return;
     const store = useStore.getState();
     const task = store.tasks.find((t) => t.id === dragged.id);
@@ -315,6 +349,8 @@ function Planner() {
       const grid = document.querySelector<HTMLElement>('[data-timeline-grid]');
       const top = dragged.rect.current.translated?.top;
       restore();
+      // Passing the board's edge on the way here may have nudged it sideways. Put it back.
+      document.querySelector('.board')?.scrollTo({ left: boardScroll.current });
       if (!grid || top === undefined) return;
       const { dayStart, dayEnd } = store.settings;
       const raw = dayStart * 60 + (top - grid.getBoundingClientRect().top) / PX_PER_MIN;
@@ -345,9 +381,23 @@ function Planner() {
           {intention}
         </p>
       )}
+      {hasExamples && (
+        <p className="notice">
+          These are example tasks that show how Kalm works.
+          <button type="button" className="link-btn" onClick={() => useStore.getState().removeExamples()}>
+            Remove the examples
+          </button>
+        </p>
+      )}
+      <TimerNag />
       <DndContext
         sensors={sensors}
         collisionDetection={collision}
+        autoScroll={{
+          threshold: { x: 0.06, y: 0.2 },
+          // The board must not run away while a card is held over the timeline.
+          canScroll: (el) => !(overTimeline.current && el.classList.contains('board')),
+        }}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}

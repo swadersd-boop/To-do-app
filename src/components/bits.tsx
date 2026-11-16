@@ -16,6 +16,24 @@ export function useNow(intervalMs: number, active = true): number {
   return now;
 }
 
+/**
+ * Closes the topmost layer on Escape, wherever the focus is. A popover that
+ * handled the key first has already stopped it.
+ */
+export function useEscape(onClose: () => void) {
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      latest.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+}
+
 /** Seconds tracked on a task, including a timer that is still running. */
 export function useTracked(taskId: string, actualSec: number): { seconds: number; running: boolean } {
   const timer = useStore((s) => s.timer);
@@ -217,6 +235,8 @@ export function Dialog({
     if (body.current) body.current.scrollTop = 0;
   }, [scrollKey]);
 
+  useEscape(onClose);
+
   return createPortal(
     <div className="backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
@@ -226,12 +246,6 @@ export function Dialog({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            onClose();
-          }
-        }}
       >
         <header className="dialog-head">
           <h2>{title}</h2>

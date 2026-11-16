@@ -23,6 +23,8 @@ interface UI {
   sidebarOpen: boolean;
   timelineOpen: boolean;
   toast: Toast | null;
+  /** Bumped to ask the board to scroll back to its first column. */
+  boardReset: number;
 
   setToday: (d: ISODate) => void;
   selectDay: (d: ISODate) => void;
@@ -52,6 +54,7 @@ export const useUI = create<UI>()(
       sidebarOpen: atLeast(1200),
       timelineOpen: atLeast(900),
       toast: null,
+      boardReset: 0,
 
       setToday: (d) =>
         set((s) => ({
@@ -61,7 +64,7 @@ export const useUI = create<UI>()(
         })),
       selectDay: (d) => set({ selectedDay: d }),
       setBoardStart: (d) => set({ boardStart: d }),
-      goToday: () => set((s) => ({ boardStart: s.today, selectedDay: s.today })),
+      goToday: () => set((s) => ({ boardStart: s.today, selectedDay: s.today, boardReset: s.boardReset + 1 })),
       openTask: (id) => set({ openTaskId: id }),
       openModal: (m) => set({ modal: m }),
       focusOn: (id) => set({ focusTaskId: id, modal: 'focus', openTaskId: null }),

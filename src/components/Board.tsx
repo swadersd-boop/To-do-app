@@ -8,12 +8,13 @@ const DAYS_SHOWN = 10;
 export function Board({ todayAddRef }: { todayAddRef: React.RefObject<HTMLInputElement> }) {
   const boardStart = useUI((s) => s.boardStart);
   const today = useUI((s) => s.today);
+  const boardReset = useUI((s) => s.boardReset);
   const scroller = useRef<HTMLDivElement>(null);
   const days = useMemo(() => Array.from({ length: DAYS_SHOWN }, (_, i) => addDays(boardStart, i)), [boardStart]);
 
   useEffect(() => {
     scroller.current?.scrollTo({ left: 0 });
-  }, [boardStart]);
+  }, [boardStart, boardReset]);
 
   return (
     <div className="board" ref={scroller}>
