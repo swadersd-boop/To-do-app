@@ -193,7 +193,12 @@ export function Timeline() {
             {boxed.map((t) => (
               <Block key={t.id} task={t} col={layout[t.id]?.col ?? 0} cols={layout[t.id]?.cols ?? 1} dayStartMin={dayStartMin} dayEndMin={dayEndMin} />
             ))}
-            {boxed.length === 0 && <p className="grid-hint">Drag a task here to give it a time, or press "Fill my day".</p>}
+            {boxed.length === 0 && (
+              <p className="grid-hint">
+                <span className="wide-only">Drag a task here to give it a time, or press "Fill my day".</span>
+                <span className="narrow-only">Press "Fill my day", or open a task and set "Starts at".</span>
+              </p>
+            )}
           </div>
           {showNow && (
             <div className="now" style={{ top: (nowMin - dayStartMin) * PX_PER_MIN }} aria-hidden="true">

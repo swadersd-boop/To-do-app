@@ -174,6 +174,18 @@ assert.equal(await cardIn(today, 'Stretch').count(), 0, 'task deleted');
 await page.getByRole('button', { name: 'Undo' }).click();
 await cardIn(today, 'Stretch').waitFor();
 
+// 12b. A repeating task creates its next occurrence when finished, and takes it back when un-finished.
+await cardIn(today, 'Stretch').click();
+await page.getByRole('dialog').getByLabel('Repeats').selectOption('daily');
+await page.keyboard.press('Escape');
+await cardIn(today, 'Stretch').getByRole('checkbox').click();
+await cardIn(tomorrow, 'Stretch').waitFor();
+await cardIn(today, 'Stretch').getByRole('checkbox').click();
+await page.waitForTimeout(100);
+assert.equal(await cardIn(tomorrow, 'Stretch').count(), 0, 'un-finishing removes the next occurrence');
+await cardIn(today, 'Stretch').getByRole('checkbox').click();
+await cardIn(tomorrow, 'Stretch').waitFor();
+
 // 13. Other panels open without errors.
 for (const [name, file] of [
   ['Insights', '12-insights'],

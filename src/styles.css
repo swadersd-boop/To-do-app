@@ -117,6 +117,10 @@ code {
   flex: 1;
 }
 
+.narrow-only {
+  display: none;
+}
+
 .muted {
   color: var(--ink-2);
 }
@@ -1711,8 +1715,17 @@ li:focus-within > .row-x {
     margin: 0 6px 0 2px;
   }
 
+  .top-month,
   .top-rituals .btn:not(.btn-primary) .label {
     display: none;
+  }
+
+  .wide-only {
+    display: none;
+  }
+
+  .narrow-only {
+    display: inline;
   }
 
   .top-rituals {
