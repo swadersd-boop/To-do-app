@@ -1,4 +1,5 @@
-import type { ISODate, Task } from '../types';
+import type { ISODate, Repeat, Task } from '../types';
+import { addDays, isWeekend } from './dates';
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -106,4 +107,20 @@ export function layoutBlocks(blocks: { id: string; start: number; end: number }[
   }
   flush();
   return out;
+}
+
+/**
+ * The next day a repeating task is due, strictly after `after`.
+ * `anchor` is the day the finished occurrence was due: a weekly task stays on
+ * that weekday even when it was finished late.
+ */
+export function nextOccurrence(repeat: Repeat, anchor: ISODate, after: ISODate): ISODate {
+  if (repeat === 'weekly') {
+    let next = addDays(anchor, 7);
+    while (next <= after) next = addDays(next, 7);
+    return next;
+  }
+  let next = addDays(after, 1);
+  if (repeat === 'weekdays') while (isWeekend(next)) next = addDays(next, 1);
+  return next;
 }

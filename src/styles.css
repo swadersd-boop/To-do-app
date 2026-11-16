@@ -518,6 +518,18 @@ textarea::placeholder {
   margin-right: 8px;
 }
 
+.btn.is-complete {
+  color: var(--ink-2);
+}
+
+.btn .tick {
+  color: var(--accent);
+}
+
+.hint {
+  font-size: 12px;
+}
+
 .intention {
   display: flex;
   align-items: baseline;
@@ -1403,6 +1415,8 @@ li:focus-within > .row-x {
 }
 
 .props dt {
+  align-self: start;
+  padding-top: 8px;
   color: var(--ink-2);
   font-size: 13px;
 }
@@ -1671,27 +1685,45 @@ li:focus-within > .row-x {
 
 @media (max-width: 899px) {
   .top {
-    gap: 0;
-    padding: 0 6px;
+    flex-wrap: wrap;
+    gap: 2px;
+    height: auto;
+    padding: 6px 8px;
+  }
+
+  /* Second row: day navigation on the left, the rituals on the right. */
+  .top::after {
+    content: '';
+    order: 9;
+    flex-basis: 100%;
+  }
+
+  .top-nav {
+    order: 10;
+  }
+
+  .top-rituals {
+    order: 11;
+    margin-left: auto;
   }
 
   .brand {
     margin: 0 6px 0 2px;
   }
 
-  .brand span,
-  .top-month,
-  .top-rituals .label {
+  .top-rituals .btn:not(.btn-primary) .label {
     display: none;
   }
 
   .top-rituals {
-    gap: 4px;
-    margin-right: 2px;
+    gap: 6px;
+    margin-right: 0;
   }
 
-  .top-rituals .btn {
-    padding: 0 9px;
+  .top-rituals .btn,
+  .top .icon-btn {
+    height: 40px;
+    min-width: 40px;
   }
 
   .shell,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, layoutBlocks, moveTask, rollover, tasksOn } from '../src/lib/model';
+import { autoSchedule, layoutBlocks, moveTask, nextOccurrence, rollover, tasksOn } from '../src/lib/model';
 import { forecast, honesty } from '../src/lib/stats';
 import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
@@ -219,5 +219,23 @@ describe('summaries', () => {
     expect(text).toContain('Not done (1):\n- Emails');
     expect(text).toContain('Tracked 50m against 2h planned.');
     expect(text).toContain('Reflection: Good day');
+  });
+});
+
+describe('nextOccurrence', () => {
+  it('repeats daily from the day after', () => {
+    expect(nextOccurrence('daily', '2026-11-16', '2026-11-16')).toBe('2026-11-17');
+    expect(nextOccurrence('daily', '2026-11-13', '2026-11-16')).toBe('2026-11-17');
+  });
+
+  it('skips the weekend for weekday tasks', () => {
+    expect(nextOccurrence('weekdays', '2026-11-20', '2026-11-20')).toBe('2026-11-23');
+    expect(nextOccurrence('weekdays', '2026-11-18', '2026-11-18')).toBe('2026-11-19');
+  });
+
+  it('keeps a weekly task on its weekday, even when finished late', () => {
+    expect(nextOccurrence('weekly', '2026-11-16', '2026-11-16')).toBe('2026-11-23');
+    expect(nextOccurrence('weekly', '2026-11-16', '2026-11-18')).toBe('2026-11-23');
+    expect(nextOccurrence('weekly', '2026-11-16', '2026-11-25')).toBe('2026-11-30');
   });
 });

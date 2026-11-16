@@ -1,6 +1,8 @@
 /** A calendar day as a local `YYYY-MM-DD` string. */
 export type ISODate = string;
 
+export type Repeat = 'daily' | 'weekdays' | 'weekly';
+
 export interface Subtask {
   id: string;
   title: string;
@@ -29,6 +31,12 @@ export interface Task {
   /** How many times the task has been carried over to a later day. */
   rolled: number;
   createdAt: string;
+  /** Finishing a repeating task creates its next occurrence. */
+  repeat?: Repeat | null;
+  /** The day this occurrence was due, so a weekly task keeps its weekday after a rollover. */
+  repeatFrom?: ISODate | null;
+  /** The occurrence created when this one was finished, so un-finishing can take it back. */
+  nextId?: string | null;
 }
 
 export interface Channel {

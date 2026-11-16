@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Play, Trash2, X } from 'lucide-react';
-import type { Task } from '../types';
+import type { Repeat, Task } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
@@ -143,6 +143,26 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
                 onChange={(min) => updateTask(task.id, { actualSec: Math.round((min ?? 0) * 60) })}
               />
             </dd>
+
+            {task.date !== null && (
+              <>
+                <dt>Repeats</dt>
+                <dd>
+                  <select
+                    className="field"
+                    aria-label="Repeats"
+                    value={task.repeat ?? ''}
+                    onChange={(e) => updateTask(task.id, { repeat: (e.target.value || null) as Repeat | null, repeatFrom: e.target.value ? task.date : null })}
+                  >
+                    <option value="">Never</option>
+                    <option value="daily">Every day</option>
+                    <option value="weekdays">Every weekday</option>
+                    <option value="weekly">Every week</option>
+                  </select>
+                  {task.repeat && <span className="muted hint">The next one appears when you finish this one.</span>}
+                </dd>
+              </>
+            )}
 
             <dt>Channel</dt>
             <dd>

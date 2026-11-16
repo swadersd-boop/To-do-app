@@ -166,15 +166,22 @@ function Header({ onFocus }: { onFocus: () => void }) {
       <span className="spacer" />
 
       <div className="top-rituals">
-        <button type="button" className={`btn ${planned ? '' : 'btn-primary'}`} onClick={() => ui.openModal('plan')}>
-          {planned ? <Check size={15} /> : <Sunrise size={15} />}
+        <button type="button" className={`btn ${planned ? 'is-complete' : 'btn-primary'}`} onClick={() => ui.openModal('plan')} aria-label={planned ? 'Planned' : 'Plan today'}>
+          <Sunrise size={15} />
           <span className="label">{planned ? 'Planned' : 'Plan today'}</span>
+          {planned && <Check size={13} className="tick" />}
         </button>
-        <button type="button" className={`btn ${planned && !closed ? 'btn-primary' : ''}`} onClick={() => ui.openModal('shutdown')}>
-          {closed ? <Check size={15} /> : <Moon size={15} />}
+        <button
+          type="button"
+          className={`btn ${closed ? 'is-complete' : planned ? 'btn-primary' : ''}`}
+          onClick={() => ui.openModal('shutdown')}
+          aria-label={closed ? 'Closed' : 'Shut down'}
+        >
+          <Moon size={15} />
           <span className="label">{closed ? 'Closed' : 'Shut down'}</span>
+          {closed && <Check size={13} className="tick" />}
         </button>
-        <button type="button" className="btn" onClick={onFocus}>
+        <button type="button" className="btn" onClick={onFocus} aria-label="Focus">
           <Play size={14} fill="currentColor" />
           <span className="label">Focus</span>
         </button>

@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Clock, ListChecks, Play, RotateCw, Square } from 'lucide-react';
+import { Clock, ListChecks, Play, Repeat, RotateCw, Square } from 'lucide-react';
 import type { Task } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
@@ -53,6 +53,11 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
           <span className="meta">
             <ListChecks size={12} />
             {subDone}/{task.subtasks.length}
+          </span>
+        )}
+        {task.repeat && (
+          <span className="meta" title={task.repeat === 'daily' ? 'Repeats every day' : task.repeat === 'weekdays' ? 'Repeats every weekday' : 'Repeats every week'}>
+            <Repeat size={11} />
           </span>
         )}
         {task.rolled > 0 && !task.done && (

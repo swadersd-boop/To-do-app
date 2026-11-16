@@ -15,7 +15,11 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const APP = process.env.KALM_URL ?? 'http://localhost:4173/';
 const SHOTS = fileURLToPath(new URL('./shots/', import.meta.url));
 mkdirSync(SHOTS, { recursive: true });
-const shot = (page, name) => page.screenshot({ path: `${SHOTS}${name}.png` });
+const shot = async (page, name) => {
+  // Let open and close animations finish so no screenshot is half faded.
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+  await page.screenshot({ path: `${SHOTS}${name}.png` });
+};
 
 const errors = [];
 const browser = await chromium.launch();
@@ -205,6 +209,18 @@ await mobile.clock.install({ time: new Date('2026-11-16T09:10:00+01:00') });
 await mobile.goto(APP);
 await mobile.locator('.col.is-today').waitFor();
 await shot(mobile, '17-phone');
+for (const name of ['Timeline', 'Settings', 'Backlog and objectives', 'Plan today', 'Shut down', 'Focus']) {
+  const box = await mobile.getByRole('button', { name, exact: true }).boundingBox();
+  assert.ok(box && box.x >= 0 && box.x + box.width <= 390, `"${name}" button is fully on screen on a phone`);
+}
+await mobile.getByRole('button', { name: 'Timeline', exact: true }).click();
+await mobile.locator('.timeline').waitFor();
+await shot(mobile, '18-phone-timeline');
+await mobile.getByRole('button', { name: 'Timeline', exact: true }).click();
+await mobile.getByRole('button', { name: 'Plan today', exact: true }).click();
+await mobile.getByRole('dialog').waitFor();
+await shot(mobile, '19-phone-plan');
+await mobile.keyboard.press('Escape');
 const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 assert.ok(overflow <= 0, `page scrolls sideways by ${overflow}px on a phone`);
 

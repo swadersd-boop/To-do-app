@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, todayISO, weekStart } from './lib/dates';
-import { autoSchedule, moveTask, rollover, tasksOn } from './lib/model';
+import { autoSchedule, moveTask, nextOccurrence, rollover, tasksOn } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -181,12 +181,33 @@ export const useStore = create<Store>()(
       toggleDone: (id) =>
         set((s) => {
           const settled = s.timer?.taskId === id ? settleTimer(s) : { tasks: s.tasks, timer: s.timer };
-          return {
-            timer: settled.timer,
-            tasks: settled.tasks.map((t) =>
-              t.id === id ? { ...t, done: !t.done, doneAt: t.done ? null : new Date().toISOString() } : t,
-            ),
-          };
+          const task = settled.tasks.find((t) => t.id === id);
+          if (!task) return s;
+          let tasks = settled.tasks;
+
+          if (task.done) {
+            // Taking back a repeating task also takes back the occurrence it created, unless that one was worked on.
+            const spawned = task.nextId ? tasks.find((t) => t.id === task.nextId) : undefined;
+            if (spawned && !spawned.done && spawned.actualSec === 0) tasks = tasks.filter((t) => t.id !== spawned.id);
+            tasks = tasks.map((t) => (t.id === id ? { ...t, done: false, doneAt: null, nextId: null } : t));
+            return { timer: settled.timer, tasks };
+          }
+
+          let nextId: string | null = null;
+          if (task.repeat && task.date) {
+            const today = todayISO();
+            const date = nextOccurrence(task.repeat, task.repeatFrom ?? task.date, task.date > today ? task.date : today);
+            const next: Task = {
+              ...makeTask({ title: task.title, date, planned: task.planned, channelId: task.channelId, notes: task.notes, start: task.start }, nextOrder(tasks, date)),
+              subtasks: task.subtasks.map((x) => ({ ...x, id: uid(), done: false })),
+              repeat: task.repeat,
+              repeatFrom: date,
+            };
+            tasks = [...tasks, next];
+            nextId = next.id;
+          }
+          tasks = tasks.map((t) => (t.id === id ? { ...t, done: true, doneAt: new Date().toISOString(), nextId } : t));
+          return { timer: settled.timer, tasks };
         }),
 
       moveTask: (id, date, index) => set((s) => ({ tasks: moveTask(s.tasks, id, date, index) })),
