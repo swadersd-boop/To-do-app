@@ -137,6 +137,35 @@ describe('store', () => {
     expect(store().tasks.filter((t) => t.title === 'Standup')).toHaveLength(2);
   });
 
+  it('restores a history of a repeating meeting without making extra copies', () => {
+    const history = [-9, -8, -7, -6, -5].map((d) => {
+      const date = addDays(today, d);
+      return { ...store().tasks[0], id: `s${d}`, title: 'Standup', date, start: 570, planned: 15, fixed: true, done: true, repeat: 'weekdays' as const, repeatFrom: date, nextId: null };
+    });
+    store().addTask({ title: 'placeholder', date: today });
+    store().importData({ ...store(), tasks: history });
+    store().settleCommitments(today, 8 * 60);
+    expect(store().tasks.filter((t) => t.title === 'Standup' && !t.done)).toHaveLength(0);
+    store().rollover(today);
+    expect(store().tasks).toHaveLength(5);
+  });
+
+  it('keeps a series to one open occurrence', () => {
+    const id = store().addTask({ title: 'Inbox', date: today, planned: 15 });
+    store().updateTask(id, { repeat: 'daily', repeatFrom: today });
+    store().toggleDone(id);
+    // Unticking and ticking again: still exactly one open occurrence.
+    store().toggleDone(id);
+    store().toggleDone(id);
+    expect(store().tasks.filter((t) => t.title === 'Inbox' && !t.done)).toHaveLength(1);
+    // Once the next one has been worked on, unticking keeps it, and ticking again must not add a second.
+    const next = store().tasks.find((t) => t.title === 'Inbox' && !t.done)!;
+    store().updateTask(next.id, { actualSec: 300 });
+    store().toggleDone(id);
+    store().toggleDone(id);
+    expect(store().tasks.filter((t) => t.title === 'Inbox' && !t.done).map((t) => t.id)).toEqual([next.id]);
+  });
+
   it('does not bring back a whole missed week of a repeating meeting', () => {
     const lastWeek = addDays(today, -6);
     const id = store().addTask({ title: 'Standup', date: lastWeek, planned: 15, start: 570, fixed: true });

@@ -167,32 +167,40 @@ function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 't
  * week does not come back as five copies.
  */
 function complete(tasks: Task[], task: Task, today: ISODate): Task[] {
-  let nextId: string | null = null;
-  let out = tasks;
-  if (task.repeat) {
-    const due = task.date ?? today;
-    const yesterday = addDays(today, -1);
-    const date = nextOccurrence(task.repeat, task.repeatFrom ?? due, due > yesterday ? due : yesterday);
-    // Only a fixed commitment keeps its hour. A time picked by "Fill my day" was for that day alone.
-    const input: NewTask = {
-      title: task.title,
-      date,
-      planned: task.planned,
-      channelId: task.channelId,
-      notes: task.notes,
-      start: task.fixed ? task.start : null,
-      fixed: task.fixed,
-    };
-    const next: Task = {
-      ...makeTask(input, nextOrder(out, date)),
-      subtasks: task.subtasks.map((x) => ({ ...x, id: uid(), done: false })),
-      repeat: task.repeat,
-      repeatFrom: date,
-    };
-    out = [...out, next];
-    nextId = next.id;
-  }
+  const { tasks: out, nextId } = task.repeat ? spawnNext(tasks, task, today) : { tasks, nextId: null };
   return out.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: new Date().toISOString(), nextId } : t));
+}
+
+/**
+ * Creates the next occurrence of a repeating task. A series never has two
+ * open occurrences: if one is already waiting, that one is the next.
+ */
+function spawnNext(tasks: Task[], task: Task, today: ISODate): { tasks: Task[]; nextId: string | null } {
+  if (!task.repeat) return { tasks, nextId: null };
+  const due = task.date ?? today;
+  const yesterday = addDays(today, -1);
+  const date = nextOccurrence(task.repeat, task.repeatFrom ?? due, due > yesterday ? due : yesterday);
+  const waiting = tasks.find(
+    (t) => t.id !== task.id && !t.done && t.repeat === task.repeat && t.title === task.title && t.date !== null && t.date >= date,
+  );
+  if (waiting) return { tasks, nextId: waiting.id };
+  // Only a fixed commitment keeps its hour. A time picked by "Fill my day" was for that day alone.
+  const input: NewTask = {
+    title: task.title,
+    date,
+    planned: task.planned,
+    channelId: task.channelId,
+    notes: task.notes,
+    start: task.fixed ? task.start : null,
+    fixed: task.fixed,
+  };
+  const next: Task = {
+    ...makeTask(input, nextOrder(tasks, date)),
+    subtasks: task.subtasks.map((x) => ({ ...x, id: uid(), done: false })),
+    repeat: task.repeat,
+    repeatFrom: date,
+  };
+  return { tasks: [...tasks, next], nextId: next.id };
 }
 
 export const useStore = create<Store>()(
@@ -220,6 +228,12 @@ export const useStore = create<Store>()(
             return next.fixed && next.start === null ? { ...next, fixed: false } : next;
           };
           let tasks = s.tasks.map((t) => (t.id === id ? merge(t) : t));
+          // Making a finished task repeat starts the series from it right away.
+          const merged = tasks.find((t) => t.id === id)!;
+          if (patch.repeat && merged.done && !merged.nextId) {
+            const spawned = spawnNext(tasks, merged, todayISO());
+            tasks = spawned.tasks.map((t) => (t.id === id ? { ...t, nextId: spawned.nextId } : t));
+          }
           // A change of day through a form field lands at the end of that day.
           if (patch.date !== undefined && patch.date !== current.date) {
             tasks = tasks.map((t) =>
@@ -282,10 +296,7 @@ export const useStore = create<Store>()(
       settleCommitments: (today, nowMin) =>
         set((s) => {
           const over = s.tasks.filter(
-            (t) =>
-              (t.fixed && !t.done && t.date !== null && t.start !== null && (t.date < today || (t.date === today && t.start + lengthOf(t) <= nowMin))) ||
-              // A finished task that was set to repeat afterwards still gets its next occurrence.
-              (t.done && t.repeat && !t.nextId && t.date !== null),
+            (t) => t.fixed && !t.done && t.date !== null && t.start !== null && (t.date < today || (t.date === today && t.start + lengthOf(t) <= nowMin)),
           );
           if (over.length === 0) return s;
           let tasks = s.tasks;

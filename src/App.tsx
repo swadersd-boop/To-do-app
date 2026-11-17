@@ -87,6 +87,8 @@ function useDayRollover() {
       if (now !== useUI.getState().today) useUI.getState().setToday(now);
       // Meetings that are over count as done, without anyone ticking them off.
       useStore.getState().settleCommitments(now, clock.getHours() * 60 + clock.getMinutes());
+      // Also catches unfinished tasks that arrive from a restored backup, not only a new day.
+      if (useStore.getState().settings.autoRollover) useStore.getState().rollover(now);
     };
     tick();
     const id = window.setInterval(tick, 30_000);
