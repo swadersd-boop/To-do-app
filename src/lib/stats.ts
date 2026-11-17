@@ -1,3 +1,4 @@
+import { addDays } from './dates';
 import type { Task } from '../types';
 
 export interface Honesty {
@@ -66,3 +67,49 @@ export const trackedOn = (tasks: Task[], log?: { carriedSec?: number }) =>
 
 /** To-dos only: meetings and other fixed commitments are not counted as work done or left. */
 export const todos = (tasks: Task[]) => tasks.filter((t) => !t.fixed);
+
+export interface WeekSummary {
+  /** The Monday the week starts on. */
+  start: string;
+  done: number;
+  /** Minutes tracked across the week. */
+  tracked: number;
+  /** To-dos still open when the week ended, as handed on by its last active day. */
+  leftOver: number;
+  objectivesDone: number;
+  objectives: number;
+}
+
+/** What a calendar week came to. Each task counts once, on the day it was finished. */
+export function weekSummary(
+  tasks: Task[],
+  days: Record<string, { carried?: number; carriedSec?: number }>,
+  objectives: { weekStart: string; done: boolean }[],
+  start: string,
+): WeekSummary {
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  const inWeek = tasks.filter((t) => t.date !== null && dates.includes(t.date));
+  const lastLog = [...dates].reverse().find((d) => days[d] && (days[d].carried ?? 0) > 0);
+  const objs = objectives.filter((o) => o.weekStart === start);
+  return {
+    start,
+    done: inWeek.filter((t) => t.done && !t.fixed).length,
+    tracked: dates.reduce((sum, d) => sum + trackedOn(inWeek.filter((t) => t.date === d), days[d]), 0),
+    leftOver: lastLog ? days[lastLog].carried ?? 0 : 0,
+    objectivesDone: objs.filter((o) => o.done).length,
+    objectives: objs.length,
+  };
+}
+
+/**
+ * How much longer than estimated tasks really take, as a multiplier per task,
+ * from finished history: the task's channel if it has enough data, otherwise
+ * all tasks. Kept between 0.5 and 2 so one odd week cannot wreck a plan.
+ * Null when there is not enough history.
+ */
+export function paceOf(history: Task[]): ((t: Task) => number) | null {
+  const h = honesty(history);
+  if (!h.overall) return null;
+  const clampPace = (r: number) => Math.min(2, Math.max(0.5, r));
+  return (t: Task) => clampPace((t.channelId && h.byChannel[t.channelId]?.ratio) || h.overall!.ratio);
+}

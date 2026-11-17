@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "node e2e/smoke.mjs"
+    "e2e": "node e2e/smoke.mjs && node e2e/history.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, remainingOf, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
-import { forecast, honesty } from '../src/lib/stats';
+import { autoSchedule, planLength, remainingOf, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
+import { forecast, honesty, paceOf, weekSummary } from '../src/lib/stats';
 import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
 import { planText, shutdownText } from '../src/lib/summary';
@@ -163,7 +163,13 @@ describe('fixed commitments', () => {
   it('books only the time a half-done task still needs', () => {
     const deck = task({ id: 'deck', order: 0, planned: 120, actualSec: 104 * 60, start: 540 });
     expect(remainingOf(deck)).toBe(20);
-    expect(autoSchedule([deck], 690, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ deck: 690 });
+    // The work it already got stays where it happened, and the block runs on for the 20 minutes left.
+    expect(autoSchedule([deck], 690, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ deck: 540 });
+    expect(planLength(deck, 690)).toBe(690 - 540 + 20);
+    // A half-done task that was planned for later is simply moved with what it still needs.
+    const later = { ...deck, start: 900 };
+    expect(autoSchedule([later], 690, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ deck: 690 });
+    expect(planLength(later, 690)).toBe(20);
   });
 
   it("stops at the day's capacity even when the clock has room", () => {
@@ -352,5 +358,59 @@ describe('freeMinutes', () => {
     expect(freeMinutes(day, 690, 19 * 60, [{ start: 720, end: 780 }])).toBe(450 - 60 - 30);
     expect(freeMinutes([], 1110, 19 * 60)).toBe(30);
     expect(freeMinutes([], 1200, 19 * 60)).toBe(0);
+  });
+});
+
+describe('replanning keeps worked time in place', () => {
+  it('leaves a task in progress where it started and only extends it', () => {
+    // Worked from 13:00, already 2h30m in on a 2h estimate, replanned at 15:30.
+    const memo = task({ id: 'memo', order: 0, planned: 120, start: 780, actualSec: 150 * 60 });
+    const offsite = task({ id: 'offsite', order: 1, planned: 60 });
+    const plan = autoSchedule([memo, offsite], 930, 19 * 60);
+    expect(plan.memo).toBe(780);
+    expect(planLength(memo, 930)).toBe(150 + 15);
+    expect(plan.offsite).toBe(945);
+  });
+
+  it('still moves a task that was planned earlier but never started', () => {
+    const slipped = task({ id: 'slipped', planned: 60, start: 600 });
+    expect(autoSchedule([slipped], 690, 19 * 60)).toEqual({ slipped: 690 });
+    expect(planLength(slipped, 690)).toBe(60);
+  });
+
+  it('can plan at the pace history shows', () => {
+    const deep = task({ id: 'deep', planned: 60, channelId: 'deep' });
+    const plan = autoSchedule([deep, task({ id: 'next', order: 1, planned: 30 })], 540, 19 * 60, [], Number.POSITIVE_INFINITY, (t) => (t.channelId === 'deep' ? 1.5 : 1));
+    expect(plan).toEqual({ deep: 540, next: 630 });
+    expect(planLength(deep, 540, () => 1.5)).toBe(90);
+  });
+});
+
+describe('weekSummary', () => {
+  it('counts each task once and reports what was left at the end of the week', () => {
+    const mon = '2026-11-09';
+    const tasks = [
+      task({ date: '2026-11-09', done: true, actualSec: 3600 }),
+      task({ date: '2026-11-11', done: true, actualSec: 1800 }),
+      task({ date: '2026-11-12', done: true, fixed: true, start: 570 }),
+      task({ date: '2026-11-16', done: false }),
+    ];
+    const days = { '2026-11-10': { carried: 1, carriedSec: 600 }, '2026-11-11': { carried: 1 }, '2026-11-13': { carried: 2, carriedSec: 0 } };
+    const objectives = [{ weekStart: mon, done: true }, { weekStart: mon, done: false }, { weekStart: '2026-11-16', done: false }];
+    expect(weekSummary(tasks, days, objectives, mon)).toEqual({ start: mon, done: 2, tracked: 100, leftOver: 2, objectivesDone: 1, objectives: 2 });
+  });
+});
+
+describe('paceOf', () => {
+  it('scales by channel, falls back to the overall pace, and stays within limits', () => {
+    const done = (planned: number, actualMin: number, channelId: string | null) => task({ done: true, planned, actualSec: actualMin * 60, channelId });
+    const history = [...Array(5)].map(() => done(60, 90, 'deep')).concat([...Array(5)].map(() => done(60, 60, 'admin')));
+    const pace = paceOf(history)!;
+    expect(pace(task({ channelId: 'deep' }))).toBeCloseTo(1.5);
+    expect(pace(task({ channelId: 'admin' }))).toBeCloseTo(1);
+    expect(pace(task({ channelId: null }))).toBeCloseTo(1.25);
+    expect(paceOf([])).toBeNull();
+    const wild = [...Array(5)].map(() => done(10, 100, 'x'));
+    expect(paceOf(wild)!(task({ channelId: 'x' }))).toBe(2);
   });
 });

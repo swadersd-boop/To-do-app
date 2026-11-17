@@ -77,6 +77,8 @@ export interface DayLog {
   carriedMin?: number;
   /** Seconds tracked this day on tasks that were then carried to a later day. */
   carriedSec?: number;
+  /** Titles of the tasks this day carried over, so the day still shows what was planned. */
+  carriedTitles?: string[];
 }
 
 export interface Settings {
@@ -88,6 +90,10 @@ export interface Settings {
   dayEnd: number;
   theme: 'system' | 'light' | 'dark';
   autoRollover: boolean;
+  /** Carry unfinished tasks over on Saturdays and Sundays too. Off: they wait for Monday. */
+  weekendRollover?: boolean;
+  /** Book time at the pace history shows instead of at the raw estimates. On unless switched off. */
+  planAtPace?: boolean;
   /** A daily break that scheduling keeps free, in minutes from midnight. `null` start means no break. */
   lunchStart?: number | null;
   lunchLength?: number;

@@ -52,9 +52,20 @@ export function FocusMode() {
 
   // Finishing or skipping stops the clock. The next task waits until you press Start.
   const advance = (markDone: boolean) => {
+    // Finished without ever pressing Start: count the time since it opened here, and say so.
+    const openedAt = useUI.getState().focusOpenedAt;
+    const since = openedAt ? Date.now() - openedAt : 0;
+    if (markDone && !running && seconds < 60 && since >= 60_000 && since <= 4 * 3600_000) {
+      const id = task.id;
+      updateTask(id, { actualSec: Math.round(since / 1000) });
+      useUI.getState().notify(`Counted ${fmtMin(since / 60_000)}, the time since you opened it.`, {
+        label: 'Undo',
+        run: () => useStore.getState().updateTask(id, { actualSec: 0 }),
+      });
+    }
     if (markDone) toggleDone(task.id);
     if (useStore.getState().timer) stopTimer();
-    useUI.setState({ focusTaskId: next ? next.id : null });
+    useUI.setState({ focusTaskId: next ? next.id : null, focusOpenedAt: Date.now() });
   };
 
   return (

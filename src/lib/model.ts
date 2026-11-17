@@ -15,6 +15,24 @@ export function remainingOf(t: Task): number {
   return Math.max(15, Math.ceil((t.planned - t.actualSec / 60) / 5) * 5);
 }
 
+/** A multiplier on a task's estimate, for planning at the pace history shows. */
+export type Pace = (t: Task) => number;
+
+/** Started before `from` and worked on today: the time already spent stays where it happened. */
+export function inProgress(t: Task, from: number): boolean {
+  return !t.done && !t.fixed && t.start !== null && t.start < from && t.actualSec - (t.trackedBefore ?? 0) >= 60;
+}
+
+/**
+ * The timebox a replan gives a task. A task in progress keeps its start, so its
+ * block covers the time already worked plus what it still needs. Others get
+ * what they still need, scaled by `pace`.
+ */
+export function planLength(t: Task, from: number, pace: Pace = () => 1): number {
+  const needed = Math.max(15, Math.ceil((remainingOf(t) * pace(t)) / 5) * 5);
+  return inProgress(t, from) ? Math.ceil(from / 15) * 15 - t.start! + needed : needed;
+}
+
 /** Tasks for one day (or the backlog when `date` is null), in display order. */
 export function tasksOn(tasks: Task[], date: ISODate | null): Task[] {
   return tasks.filter((t) => t.date === date).sort((a, b) => a.order - b.order);
@@ -88,18 +106,25 @@ export function autoSchedule(
   until: number,
   breaks: Span[] = [],
   budget = Number.POSITIVE_INFINITY,
+  pace: Pace = () => 1,
 ): Record<string, number | null> {
+  const first = Math.ceil(from / 15) * 15;
+  const placed: Record<string, number | null> = {};
+  let used = 0;
   const busy: Span[] = [
     ...breaks,
     ...day.filter((t) => t.start !== null && (t.done || t.fixed)).map((t) => ({ start: t.start!, end: t.start! + lengthOf(t) })),
   ];
-  const placed: Record<string, number | null> = {};
-  const first = Math.ceil(from / 15) * 15;
-  let used = 0;
+  // Work under way stays where it started; only the rest of it is planned.
+  for (const t of day.filter((x) => inProgress(x, first))) {
+    placed[t.id] = t.start;
+    busy.push({ start: t.start!, end: t.start! + planLength(t, first, pace) });
+    used += planLength(t, first, pace) - (first - t.start!);
+  }
 
   for (const task of day) {
-    if (task.done || task.fixed) continue;
-    const length = remainingOf(task);
+    if (task.done || task.fixed || placed[task.id] !== undefined) continue;
+    const length = planLength(task, first, pace);
     // Past the day's capacity, the rest waits for another day even if the clock has room.
     if (used + length > budget) {
       placed[task.id] = null;

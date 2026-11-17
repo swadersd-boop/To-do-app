@@ -60,7 +60,10 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
 
       <div className="col-load">
         <LoadBar planned={planned} capacity={capacity} />
-        <span className={`col-load-text ${over > 0 ? 'is-over' : ''}`}>
+        <span
+          className={`col-load-text ${over > 0 ? 'is-over' : ''}`}
+          title={isPast && (log?.carriedSec ?? 0) >= 60 ? `Tracked time includes ${fmtMin(log!.carriedSec! / 60)} on tasks that moved on to a later day.` : undefined}
+        >
           {empty
             ? 'Nothing planned'
             : isPast
@@ -70,10 +73,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
                 : `${fmtMin(planned)} of ${fmtMin(capacity)}`}
           {!isPast && fixed > 0 && ` · ${fmtMin(fixed)} fixed`}
           {!isPast && doneCount > 0 && ` · ${doneCount} done`}
-          {isPast && (log?.carried ?? 0) > 0 && ` · ${log!.carried} carried over`}
-          {isPast && (log?.carriedSec ?? 0) >= 60 && (
-            <span className="col-load-note"> (tracked includes {fmtMin(log!.carriedSec! / 60)} on tasks carried over)</span>
-          )}
+          {isPast && (log?.carried ?? 0) > 0 && ` · ${log!.carried} moved on`}
         </span>
       </div>
 
@@ -95,13 +95,15 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
         </details>
       )}
 
-      <AddLine
-        inputRef={addRef}
-        placeholder={isToday ? 'Try: Email Sam 15m #work' : 'Add a task'}
-        label={`Add a task to ${label}`}
-        onAdd={(text) => addFromText(text, date)}
-        quick
-      />
+      {!isPast && (
+        <AddLine
+          inputRef={addRef}
+          placeholder={isToday ? 'Try: Email Sam 15m #work' : 'Add a task'}
+          label={`Add a task to ${label}`}
+          onAdd={(text) => addFromText(text, date)}
+          quick
+        />
+      )}
 
       <SortableContext items={list.map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <ul ref={setNodeRef} className={`col-list ${isOver ? 'is-over' : ''}`}>
@@ -111,7 +113,16 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
           {ghosts.map((t) => (
             <GhostCard key={`ghost-${t.id}`} task={t} />
           ))}
-          {empty && <li className="col-empty">{isPast ? 'Nothing was finished this day.' : 'Drop a task here.'}</li>}
+          {isPast &&
+            (log?.carriedTitles ?? []).map((title, i) => (
+              <li key={`moved-${i}`} className="card card-moved" title="Planned for this day, not finished, moved on to a later day">
+                <span className="moved-mark" aria-hidden="true">
+                  ↪
+                </span>
+                <span className="card-title">{title}</span>
+              </li>
+            ))}
+          {empty && !isPast && <li className="col-empty">Drop a task here.</li>}
         </ul>
       </SortableContext>
     </section>

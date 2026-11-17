@@ -2,9 +2,9 @@ import { useMemo, useRef } from 'react';
 import { Download, Trash2, Upload } from 'lucide-react';
 import { CHANNEL_COLORS, isPlannerData, snapshot, useStore } from '../store';
 import { useUI } from '../ui';
-import { addDays, shortDate, weekdayName } from '../lib/dates';
+import { addDays, shortDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
-import { type Honesty, MIN_SAMPLES, honesty, plannedTotal, todos, trackedOn } from '../lib/stats';
+import { type Honesty, MIN_SAMPLES, honesty, todos, trackedOn, weekSummary } from '../lib/stats';
 import { AddLine, Dialog } from './bits';
 
 const close = () => useUI.getState().openModal(null);
@@ -132,6 +132,12 @@ export function Settings() {
           <input type="checkbox" checked={settings.autoRollover} onChange={(e) => setSettings({ autoRollover: e.target.checked })} />
           Carry unfinished tasks over to today automatically
         </label>
+        {settings.autoRollover && (
+          <label className="check-row">
+            <input type="checkbox" checked={Boolean(settings.weekendRollover)} onChange={(e) => setSettings({ weekendRollover: e.target.checked })} />
+            Also on Saturdays and Sundays (otherwise Friday's leftovers wait for Monday)
+          </label>
+        )}
 
         <h4>Channels</h4>
         <ul className="channel-list">
@@ -207,33 +213,34 @@ export function Insights() {
   const today = useUI((s) => s.today);
   const days = useStore((s) => s.days);
   const h = useMemo(() => honesty(tasks), [tasks]);
-  const week = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, i) => {
-        const date = addDays(today, i - 6);
-        const all = tasks.filter((t) => t.date === date);
-        const list = todos(all);
-        const log = days[date];
-        // Tasks that were carried to a later day still count as planned for this one.
-        return {
-          date,
-          done: list.filter((t) => t.done).length,
-          total: list.length + (log?.carried ?? 0),
-          planned: plannedTotal(list) + (log?.carriedMin ?? 0),
-          actual: trackedOn(all, log),
-        };
-      }),
-    [tasks, days, today],
-  );
-  // Leave out the days before Kalm was first used.
+  const objectives = useStore((s) => s.objectives);
+  // Leave out the time before Kalm was first used.
   const firstDay = useMemo(
     () => [...tasks.map((t) => t.createdAt.slice(0, 10)), ...Object.keys(days)].sort()[0] ?? today,
     [tasks, days, today],
   );
-  const shownWeek = week.filter((d) => d.date >= firstDay);
+  const thisWeek = weekStart(today);
+  const weeks = useMemo(
+    () =>
+      [0, 1, 2, 3]
+        .map((i) => addDays(thisWeek, -7 * i))
+        .filter((start) => addDays(start, 6) >= firstDay)
+        .map((start) => weekSummary(tasks, days, objectives, start)),
+    [tasks, days, objectives, thisWeek, firstDay],
+  );
+  const dayRows = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => addDays(thisWeek, i))
+        .filter((date) => date <= today && date >= firstDay)
+        .map((date) => {
+          const all = tasks.filter((t) => t.date === date);
+          return { date, done: todos(all).filter((t) => t.done).length, movedOn: days[date]?.carried ?? 0, tracked: trackedOn(all, days[date]) };
+        }),
+    [tasks, days, thisWeek, today, firstDay],
+  );
 
   return (
-    <Dialog title="How your estimates hold up" onClose={close}>
+    <Dialog title="Insights" onClose={close}>
       {h.overall ? (
         <>
           <p className="insight-lead">
@@ -277,29 +284,57 @@ export function Insights() {
         </p>
       )}
 
-      <h4>Last 7 days</h4>
+      <h4>Weeks</h4>
       <table className="table">
         <thead>
           <tr>
-            <th>Day</th>
+            <th>Week of</th>
             <th className="num">Done</th>
-            <th className="num">Planned</th>
             <th className="num">Tracked</th>
+            <th className="num" title="To-dos still open when the week ended">Left over</th>
+            <th className="num">Objectives</th>
           </tr>
         </thead>
         <tbody>
-          {shownWeek.map((d) => (
-            <tr key={d.date} className={d.date === today ? 'is-today' : ''}>
-              <td>
-                {weekdayName(d.date, 'short')} {shortDate(d.date)}
-              </td>
-              <td className="num">{d.total === 0 ? '' : `${d.done} of ${d.total}`}</td>
-              <td className="num">{d.planned > 0 ? fmtMin(d.planned) : ''}</td>
-              <td className="num">{d.actual >= 1 ? fmtMin(d.actual) : ''}</td>
+          {weeks.map((w) => (
+            <tr key={w.start} className={w.start === thisWeek ? 'is-today' : ''}>
+              <td>{w.start === thisWeek ? 'This week' : shortDate(w.start)}</td>
+              <td className="num">{w.done}</td>
+              <td className="num">{w.tracked >= 1 ? fmtMin(w.tracked) : ''}</td>
+              <td className="num">{w.start === thisWeek ? '' : w.leftOver}</td>
+              <td className="num">{w.objectives > 0 ? `${w.objectivesDone} of ${w.objectives}` : ''}</td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {dayRows.length > 0 && (
+        <>
+          <h4>This week by day</h4>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="num">Done</th>
+                <th className="num" title="Unfinished tasks that moved on to the next day">Moved on</th>
+                <th className="num">Tracked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dayRows.map((d) => (
+                <tr key={d.date} className={d.date === today ? 'is-today' : ''}>
+                  <td>
+                    {weekdayName(d.date, 'short')} {shortDate(d.date)}
+                  </td>
+                  <td className="num">{d.done}</td>
+                  <td className="num">{d.movedOn || ''}</td>
+                  <td className="num">{d.tracked >= 1 ? fmtMin(d.tracked) : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </Dialog>
   );
 }
@@ -311,6 +346,7 @@ const KEYS: [string, string][] = [
   ['F', 'Focus on the first unfinished task'],
   ['T', 'Jump back to today'],
   ['← →', 'Move the board a day'],
+  ['Shift ← →', 'Move the board a week'],
   ['B', 'Show or hide the backlog'],
   ['L', 'Show or hide the timeline'],
   ['?', 'This list'],

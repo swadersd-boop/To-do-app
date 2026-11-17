@@ -116,7 +116,8 @@ function Block({
     if (!gesture.moved) {
       if (gesture.mode === 'move') openTask(task.id);
     } else if (gesture.mode === 'move') updateTask(task.id, { start: gesture.start });
-    else updateTask(task.id, { planned: gesture.length });
+    // Resizing changes the timebox. The estimate stays as it was, so Insights stays honest.
+    else updateTask(task.id, task.planned === null ? { planned: gesture.length } : { blockMin: gesture.length });
     setGesture(null);
   };
 
@@ -150,7 +151,10 @@ function Block({
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault();
           const delta = e.key === 'ArrowUp' ? -STEP : STEP;
-          if (e.shiftKey) updateTask(task.id, { planned: Math.max(STEP, lengthOf(task) + delta) });
+          if (e.shiftKey) {
+            const next = Math.max(STEP, lengthOf(task) + delta);
+            updateTask(task.id, task.planned === null ? { planned: next } : { blockMin: next });
+          }
           else updateTask(task.id, { start: Math.min(dayEndMin - STEP, Math.max(dayStartMin, task.start! + delta)) });
         }
         if (e.key === 'Backspace' || e.key === 'Delete') updateTask(task.id, { start: null });

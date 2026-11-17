@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
-import { addDays, todayISO, weekStart } from './lib/dates';
-import { autoSchedule, byTime, lengthOf, moveTask, nextOccurrence, remainingOf, rollover, tasksOn, type Span } from './lib/model';
+import { addDays, isWeekend, todayISO, weekStart } from './lib/dates';
+import { paceOf } from './lib/stats';
+import { autoSchedule, byTime, lengthOf, moveTask, nextOccurrence, planLength, rollover, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -105,7 +106,7 @@ interface Actions {
   sendTo: (id: string, date: ISODate | null) => void;
   rollover: (today: ISODate) => void;
   /** Replans the flexible tasks of a day. Returns how many got a time and which did not fit. */
-  autoSchedule: (date: ISODate, from: number) => { placed: number; left: Task[] };
+  autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[] };
   clearSchedule: (date: ISODate) => void;
   removeExamples: () => void;
 
@@ -126,7 +127,9 @@ interface Actions {
 
   addObjective: (title: string, week: ISODate) => void;
   updateObjective: (id: string, patch: Partial<Omit<Objective, 'id'>>) => void;
-  deleteObjective: (id: string) => void;
+  /** Removes an objective and unlinks its tasks. Returns what is needed to undo it. */
+  deleteObjective: (id: string) => { objective: Objective; linked: string[] } | null;
+  restoreObjective: (objective: Objective, linked: string[]) => void;
 
   setDay: (date: ISODate, patch: DayLog) => void;
   setSettings: (patch: Partial<Settings>) => void;
@@ -279,9 +282,16 @@ export const useStore = create<Store>()(
           const now = new Date();
           const nowMin = now.getHours() * 60 + now.getMinutes();
           tasks = complete(tasks, task, todayISO(now));
-          // Finishing early frees the slot that was planned for it later today,
-          // and a block finished partway through shrinks to the time it took.
-          if (!task.fixed && task.date === todayISO(now) && task.start !== null) {
+          // With tracked time, the block becomes a record of the work: it ends now and is as long as the time spent.
+          const worked = settled.tasks.find((t) => t.id === id)!;
+          const spentMin = (worked.actualSec - (worked.trackedBefore ?? 0)) / 60;
+          if (!task.fixed && task.date === todayISO(now) && spentMin >= 5) {
+            const length = Math.max(15, Math.round(spentMin / 5) * 5);
+            const start = Math.max(0, Math.floor((nowMin - spentMin) / 5) * 5);
+            tasks = tasks.map((t) => (t.id === id ? { ...t, start, blockMin: length } : t));
+          } else if (!task.fixed && task.date === todayISO(now) && task.start !== null) {
+            // Without tracked time: finishing early frees the slot planned for later,
+            // and a block finished partway through shrinks to the time it took.
             const start = task.start;
             if (start > nowMin) {
               tasks = tasks.map((t) => (t.id === id ? { ...t, start: null, blockMin: null } : t));
@@ -310,6 +320,8 @@ export const useStore = create<Store>()(
 
       rollover: (today) =>
         set((s) => {
+          // Work left on Friday waits for Monday rather than filling the weekend.
+          if (isWeekend(today) && !s.settings.weekendRollover) return s;
           const tasks = rollover(s.tasks, today);
           if (tasks === s.tasks) return s;
           // Note on each day what left it unfinished, so the record of that day stays honest.
@@ -324,21 +336,26 @@ export const useStore = create<Store>()(
               carriedMin: (log.carriedMin ?? 0) + (before.planned ?? 0),
               // The time worked that day stays with that day.
               carriedSec: (log.carriedSec ?? 0) + before.actualSec - (before.trackedBefore ?? 0),
+              carriedTitles: [...(log.carriedTitles ?? []), before.title],
             };
           }
           return { tasks, days };
         }),
 
-      autoSchedule: (date, from) => {
+      autoSchedule: (date, from, givenPace) => {
         const s = get();
+        // The same rule as the planning ritual: at your measured pace unless that is switched off.
+        const pace = givenPace ?? (s.settings.planAtPace !== false ? (paceOf(s.tasks) ?? undefined) : undefined);
         const day = tasksOn(s.tasks, date);
         // Work already finished today counts against the day's capacity.
         const doneToday = day.filter((t) => t.done && !t.fixed).reduce((sum, t) => sum + (t.planned ?? 0), 0);
         const budget = Math.max(0, s.settings.capacityMin - doneToday);
-        const plan = autoSchedule(day, Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60, breaksOf(s.settings), budget);
+        // Round to the quarter hour here too, so the store and the scheduler agree on what is under way.
+        const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 15) * 15;
+        const plan = autoSchedule(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace);
         const scheduled = s.tasks.map((t) => {
           if (plan[t.id] === undefined) return t;
-          const length = remainingOf(t);
+          const length = planLength(t, start, pace);
           return { ...t, start: plan[t.id], blockMin: plan[t.id] !== null && length !== (t.planned ?? length) ? length : null };
         });
         // The list now reads in the order the day will go.
@@ -425,17 +442,34 @@ export const useStore = create<Store>()(
       updateObjective: (id, patch) =>
         set((s) => ({ objectives: s.objectives.map((o) => (o.id === id ? { ...o, ...patch } : o)) })),
 
-      deleteObjective: (id) =>
+      deleteObjective: (id) => {
+        const objective = get().objectives.find((o) => o.id === id);
+        if (!objective) return null;
+        const linked = get().tasks.filter((t) => t.objectiveId === id).map((t) => t.id);
         set((s) => ({
           objectives: s.objectives.filter((o) => o.id !== id),
           tasks: s.tasks.map((t) => (t.objectiveId === id ? { ...t, objectiveId: null } : t)),
+        }));
+        return { objective, linked };
+      },
+
+      restoreObjective: (objective, linked) =>
+        set((s) => ({
+          objectives: s.objectives.some((o) => o.id === objective.id) ? s.objectives : [...s.objectives, objective],
+          tasks: s.tasks.map((t) => (linked.includes(t.id) ? { ...t, objectiveId: objective.id } : t)),
         })),
 
       setDay: (date, patch) => set((s) => ({ days: { ...s.days, [date]: { ...s.days[date], ...patch } } })),
 
       setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
 
-      importData: (data) => set({ ...data, settings: { ...DEFAULT_SETTINGS, ...data.settings } }),
+      importData: (data) => {
+        set({ ...data, settings: { ...DEFAULT_SETTINGS, ...data.settings } });
+        // Bring the restored data up to today at once: carry unfinished tasks over and settle past meetings.
+        const now = new Date();
+        if (get().settings.autoRollover) get().rollover(todayISO(now));
+        get().settleCommitments(todayISO(now), now.getHours() * 60 + now.getMinutes());
+      },
 
       reset: () => set({ ...seed(todayISO()), tasks: [], objectives: [] }),
     }),

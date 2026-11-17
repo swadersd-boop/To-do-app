@@ -5,15 +5,17 @@ import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText, copyText, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
-import { autoSchedule as planDay, byTime, freeMinutes, tasksOn } from '../lib/model';
-import { addDays, longDate, weekStart } from '../lib/dates';
+import { autoSchedule as planDay, byTime, freeMinutes, remainingOf, tasksOn } from '../lib/model';
+import { addDays, longDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
-import { fixedTotal, forecast, workTotal } from '../lib/stats';
+import { fixedTotal, paceOf, weekSummary } from '../lib/stats';
 import { planText } from '../lib/summary';
 import { encodePlan } from '../lib/share';
 import { AddLine, ChannelPill, Dialog, EstimateChip, LoadBar } from './bits';
+import { ObjectiveList } from './Objectives';
 
-const STEPS = ['Leftovers', 'Choose', 'Fit', 'Commit'] as const;
+const DAY_STEPS = ['Leftovers', 'Choose', 'Fit', 'Commit'] as const;
+type StepName = 'Week' | (typeof DAY_STEPS)[number];
 
 export function Stepper({ steps, step }: { steps: readonly string[]; step: number }) {
   return (
@@ -34,7 +36,12 @@ function Row({ task, children }: { task: Task; children: React.ReactNode }) {
     <li className="ritual-row">
       <div className="ritual-row-main">
         <span className="ritual-row-title">{task.title}</span>
-        <ChannelPill channelId={task.channelId} />
+        <span className="row">
+          <ChannelPill channelId={task.channelId} />
+          {task.rolled > 0 && !task.done && (
+            <span className={`meta ${task.rolled >= 3 ? 'meta-warn' : ''}`}>moved on {task.rolled === 1 ? 'once' : `${task.rolled} times`}</span>
+          )}
+        </span>
       </div>
       <EstimateChip value={task.planned} onChange={(planned) => updateTask(task.id, { planned })} />
       <div className="row">{children}</div>
@@ -51,9 +58,25 @@ export function PlanRitual() {
   const settings = useStore((s) => s.settings);
   const allObjectives = useStore((s) => s.objectives);
   const saved = useStore((s) => s.days[today]);
-  const { sendTo, setDay, autoSchedule, moveTask } = useStore.getState();
+  const { sendTo, setDay, autoSchedule, moveTask, addObjective } = useStore.getState();
 
+  // The first plan of a week starts with a look back at last week and objectives for this one.
+  const days = useStore((s) => s.days);
+  const thisWeek = weekStart(today);
+  const lastWeek = addDays(thisWeek, -7);
+  const [withWeek] = useState(() => {
+    const plannedThisWeek = Object.entries(days).some(([d, log]) => d >= thisWeek && d < today && log.plannedAt);
+    const hadLastWeek = tasks.some((t) => t.date !== null && t.date >= lastWeek && t.date < thisWeek) || allObjectives.some((o) => o.weekStart === lastWeek);
+    return !plannedThisWeek && !saved?.plannedAt && hadLastWeek;
+  });
+  const STEPS: StepName[] = withWeek ? ['Week', ...DAY_STEPS] : [...DAY_STEPS];
   const [step, setStep] = useState(0);
+  const name = STEPS[step];
+  const review = useMemo(() => weekSummary(tasks, days, allObjectives, lastWeek), [tasks, days, allObjectives, lastWeek]);
+  const lastObjectives = allObjectives.filter((o) => o.weekStart === lastWeek);
+  const reflections = Object.entries(days)
+    .filter(([d, log]) => d >= lastWeek && d < thisWeek && log.reflection)
+    .sort(([a], [b]) => (a < b ? -1 : 1));
   const [intention, setIntention] = useState(saved?.intention ?? '');
   const [fill, setFill] = useState(true);
   /** Tasks left out of the share link, such as personal ones. */
@@ -68,11 +91,17 @@ export function PlanRitual() {
     [tasks, today],
   );
   const objectives = allObjectives.filter((o) => o.weekStart === weekStart(today) && !o.done);
+  const stuck = leftovers.filter((t) => t.rolled >= 3);
 
-  const planned = workTotal(open);
+  // What the open to-dos still need: estimates minus time already tracked, at your measured pace if you choose.
+  const pace = useMemo(() => paceOf(tasks), [tasks]);
+  const atPace = settings.planAtPace !== false;
+  const setAtPace = (on: boolean) => useStore.getState().setSettings({ planAtPace: on });
+  const usePace = atPace && pace !== null ? pace : undefined;
+  const estimated = open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t), 0);
+  const planned = usePace ? open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t) * usePace(t), 0) : estimated;
   const fixed = fixedTotal(open);
   const missing = open.filter((t) => t.planned === null).length;
-  const likely = forecast(open.filter((t) => !t.fixed), tasks);
 
   // Planning late in the day compares against the time that is actually left.
   const clock = new Date();
@@ -90,14 +119,14 @@ export function PlanRitual() {
   // The same rule "Start my day" uses: no more work than the day's capacity, and only the time that is left.
   const doneToday = todays.filter((t) => t.done && !t.fixed).reduce((sum, t) => sum + (t.planned ?? 0), 0);
   const budget = Math.max(0, settings.capacityMin - doneToday);
-  const preview = useMemo(() => planDay(open, from, until, breaks, budget), [open, from, until, breaks, budget]);
+  const preview = useMemo(() => planDay(open, from, until, breaks, budget, usePace), [open, from, until, breaks, budget, usePace]);
   const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
   const ordered = byTime(open.map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)));
   const summary = planText(today, ordered, channels, intention);
 
   const finish = () => {
     setDay(today, { plannedAt: new Date().toISOString(), intention: intention.trim() });
-    const left = fill ? autoSchedule(today, nowMin).left : [];
+    const left = fill ? autoSchedule(today, nowMin, usePace).left : [];
     close();
     if (left.length === 0) return notify('Day planned. Go do the first thing.');
     notify(
@@ -153,7 +182,57 @@ export function PlanRitual() {
       scrollKey={step}
     >
 
-      {step === 0 && (
+      {name === 'Week' && (
+        <div className="ritual-step">
+          <h3>A new week</h3>
+          <p className="lede">
+            Last week you finished {review.done} task{review.done === 1 ? '' : 's'}
+            {review.tracked >= 1 && ` and tracked ${fmtMin(review.tracked)}`}
+            {review.leftOver > 0 && `, with ${review.leftOver} still open at the end`}.
+          </p>
+          {lastObjectives.length > 0 && (
+            <>
+              <h4>Last week's objectives</h4>
+              <ul className="ritual-list">
+                {lastObjectives.map((o) => {
+                  const carried = allObjectives.some((x) => x.weekStart === thisWeek && x.title === o.title);
+                  return (
+                    <li key={o.id} className={`ritual-row ${o.done ? 'is-done' : ''}`}>
+                      <span className={`week-mark ${o.done ? 'is-done' : ''}`} aria-hidden="true">
+                        {o.done ? '✓' : '·'}
+                      </span>
+                      <div className="ritual-row-main">
+                        <span className="ritual-row-title">{o.title}</span>
+                        <span className="muted hint">{o.done ? 'Done' : 'Not done'}</span>
+                      </div>
+                      {!o.done && (
+                        <button type="button" className="btn btn-quiet" disabled={carried} onClick={() => addObjective(o.title, thisWeek)}>
+                          {carried ? 'Carried to this week' : 'Carry to this week'}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          {reflections.length > 0 && (
+            <details className="recap">
+              <summary>What you wrote at the end of each day</summary>
+              {reflections.map(([d, log]) => (
+                <p key={d}>
+                  <span>{weekdayName(d)}</span>
+                  {log.reflection}
+                </p>
+              ))}
+            </details>
+          )}
+          <h4>This week's objectives</h4>
+          <ObjectiveList week={thisWeek} />
+        </div>
+      )}
+
+      {name === 'Leftovers' && (
         <div className="ritual-step">
           <h3>Start with what is left over</h3>
           {leftovers.length === 0 ? (
@@ -161,6 +240,16 @@ export function PlanRitual() {
           ) : (
             <>
               <p className="lede">These did not get done. Decide on each one before adding anything new.</p>
+              {stuck.length > 0 && (
+                <p className="row wrap wont-fit">
+                  <span>
+                    {stuck.length === 1 ? 'One task has' : `${stuck.length} tasks have`} moved on three times or more. Perhaps {stuck.length === 1 ? 'it belongs' : 'they belong'} in the backlog.
+                  </span>
+                  <button type="button" className="btn" onClick={() => stuck.forEach((t) => sendTo(t.id, null))}>
+                    Send {stuck.length === 1 ? 'it' : 'them'} to the backlog
+                  </button>
+                </p>
+              )}
               <ul className="ritual-list">
                 {leftovers.map((t) => (
                   <Row key={t.id} task={t}>
@@ -186,7 +275,7 @@ export function PlanRitual() {
         </div>
       )}
 
-      {step === 1 && (
+      {name === 'Choose' && (
         <div className="ritual-step">
           <h3>What do you want to get done today?</h3>
           <div className="ritual-cols">
@@ -237,14 +326,14 @@ export function PlanRitual() {
         </div>
       )}
 
-      {step === 2 && (
+      {name === 'Fit' && (
         <div className="ritual-step">
           <h3>{late ? 'Does it fit in what is left of today?' : 'Does it fit in one day?'}</h3>
           <div className="fit">
             <div className="fit-num">
               <strong className={over > 0 ? 'is-over' : ''}>{fmtMin(planned)}</strong>
               <span>
-                of work planned, {late ? `with ${fmtMin(available)} left today` : `of ${fmtMin(available)}`}
+                {usePace ? 'of work at your pace' : 'of work planned'}, {late ? `with ${fmtMin(available)} left today` : `of ${fmtMin(available)}`}
                 {fixed > 0 && `, plus ${fmtMin(fixed)} of fixed commitments`}
               </span>
             </div>
@@ -257,10 +346,14 @@ export function PlanRitual() {
                   : `It fits, with ${fmtMin(-over)} to spare.`}
               {missing > 0 && ` ${missing} task${missing === 1 ? ' has' : 's have'} no estimate yet.`}
             </p>
-            {likely !== null && Math.abs(likely - planned) >= 10 && (
-              <p className="fit-forecast">
-                Going by your tracked time, this is closer to <strong>{fmtMin(likely)}</strong> of real work.
-              </p>
+            {pace !== null && Math.abs(estimated - open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t) * pace(t), 0)) >= 10 && (
+              <label className="check-row fit-forecast">
+                <input type="checkbox" checked={atPace} onChange={(e) => setAtPace(e.target.checked)} />
+                <span>
+                  Plan at my real pace. Your estimates add up to {fmtMin(estimated)}; going by your tracked time this is closer to{' '}
+                  <strong>{fmtMin(open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t) * pace(t), 0))}</strong>, and the timeline books that.
+                </span>
+              </label>
             )}
           </div>
           <p className="muted">The order below is your priority. Kalm schedules from the top, so if the day runs out, the bottom drops off.</p>
@@ -284,7 +377,7 @@ export function PlanRitual() {
         </div>
       )}
 
-      {step === 3 && (
+      {name === 'Commit' && (
         <div className="ritual-step">
           <h3>Commit to the day</h3>
           <label className="stack">

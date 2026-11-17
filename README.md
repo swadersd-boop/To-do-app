@@ -13,10 +13,11 @@ Kalm runs entirely in your browser. There is no account and no server, and your 
 - **A planning ritual.** Four steps each morning: deal with leftovers, choose today's tasks, check that they fit, commit. Plan late in the day and it measures against the time you actually have left. Before you commit it shows what will not fit. It ends with a plan you can copy as text or share as a link.
 - **Focus mode.** One task on screen with a timer that records the time you really spent. Focus picks what the timeline says is next, never a meeting that has not started. A running timer always shows in a bar at the top, and one left on far too long asks before it counts more.
 - **A shutdown ritual.** Review what got done, decide what happens to the rest, write a few lines of reflection, copy the recap.
-- **Honest estimates.** Kalm compares your estimates with your tracked time. After a few finished tasks it tells you how far off you run, per channel, and the planning ritual uses that to forecast what a day will really cost.
-- **Weekly objectives, channels, steps and notes** on every task.
+- **Honest estimates.** Kalm compares your estimates with your tracked time. After a few finished tasks it tells you how far off you run, per channel, and plans your day at that real pace (you can switch this off in the planning ritual).
+- **Weeks.** Objectives belong to a week, and the sidebar shows the objectives of whichever week the board shows, so you can look back or set next week's ahead of time. The first time you plan in a new week, Kalm opens with last week: what got done, which objectives you hit, what you wrote each evening, and a one-click way to carry unfinished objectives forward. Insights adds up each calendar week.
+- **Channels, steps and notes** on every task, and tasks can be linked to a weekly objective.
 - **Repeating tasks.** Daily, weekdays or weekly. Upcoming days show a preview, and each occurrence becomes real when you finish the one before it, so missed ones never pile up.
-- **Rollover.** Unfinished tasks move to today on their own, and show how many times they have been carried. The day they left keeps a note of how many were carried, so past days stay an honest record.
+- **Rollover.** Unfinished tasks move to today on their own, and show how many times they have moved on. Friday's leftovers wait for Monday instead of filling your weekend (Settings can change that). A task that keeps moving gets flagged, with an offer to park it in the backlog. Past days keep the record: what got done, the time tracked, and the names of the tasks that moved on.
 - **Works offline** and installs as an app from the browser menu.
 
 ## Quick add
@@ -100,7 +101,7 @@ npm run build
 
 type-checks and builds the app into `dist/`.
 
-The end-to-end test walks the whole daily loop in a real browser and saves screenshots to `e2e/shots/`. It needs Playwright (`npm install --no-save playwright` and `npx playwright install chromium`) and a running preview server:
+Two end-to-end tests run in a real browser: `e2e/smoke.mjs` walks the whole daily loop on a fresh install and saves screenshots to `e2e/shots/`, and `e2e/history.mjs` restores two weeks of history (`e2e/fixtures/two-weeks.json`) and checks past days, the weekly review and several days of rollover. It needs Playwright (`npm install --no-save playwright` and `npx playwright install chromium`) and a running preview server:
 
 ```bash
 npx vite preview --port 4173

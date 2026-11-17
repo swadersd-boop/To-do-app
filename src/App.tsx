@@ -24,6 +24,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   HelpCircle,
   Moon,
   PanelLeft,
@@ -35,7 +37,7 @@ import {
 import type { ISODate, Task } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
-import { addDays, fromISO, relativeDay, todayISO } from './lib/dates';
+import { addDays, fromISO, relativeDay, todayISO, weekStart } from './lib/dates';
 import { focusTarget, tasksOn } from './lib/model';
 import { isShareHash } from './lib/share';
 import { fmtStopwatch, snap } from './lib/time';
@@ -260,14 +262,20 @@ function Header({ onFocus }: { onFocus: () => void }) {
       </a>
 
       <nav className="top-nav" aria-label="Days">
-        <button type="button" className="icon-btn" onClick={() => ui.setBoardStart(addDays(ui.boardStart, -1))} aria-label="Earlier">
+        <button type="button" className="icon-btn hide-narrow" onClick={() => ui.setBoardStart(addDays(weekStart(ui.boardStart), -7))} aria-label="Previous week" title="Previous week (Shift + ←)">
+          <ChevronsLeft size={18} />
+        </button>
+        <button type="button" className="icon-btn" onClick={() => ui.setBoardStart(addDays(ui.boardStart, -1))} aria-label="Earlier" title="A day earlier (←)">
           <ChevronLeft size={18} />
         </button>
         <button type="button" className="btn btn-quiet" onClick={ui.goToday}>
           Today
         </button>
-        <button type="button" className="icon-btn" onClick={() => ui.setBoardStart(addDays(ui.boardStart, 1))} aria-label="Later">
+        <button type="button" className="icon-btn" onClick={() => ui.setBoardStart(addDays(ui.boardStart, 1))} aria-label="Later" title="A day later (→)">
           <ChevronRight size={18} />
+        </button>
+        <button type="button" className="icon-btn hide-narrow" onClick={() => ui.setBoardStart(addDays(weekStart(ui.boardStart), 7))} aria-label="Next week" title="Next week (Shift + →)">
+          <ChevronsRight size={18} />
         </button>
         <span className="top-month">{month}</span>
       </nav>
@@ -379,10 +387,10 @@ function Planner() {
         case 'ArrowLeft':
           // On a card or block the arrows belong to it, so the board stays where it is.
           if (target.closest('.card-wrap, .block')) return;
-          return run(() => state.setBoardStart(addDays(state.boardStart, -1)));
+          return run(() => state.setBoardStart(e.shiftKey ? addDays(weekStart(state.boardStart), -7) : addDays(state.boardStart, -1)));
         case 'ArrowRight':
           if (target.closest('.card-wrap, .block')) return;
-          return run(() => state.setBoardStart(addDays(state.boardStart, 1)));
+          return run(() => state.setBoardStart(e.shiftKey ? addDays(weekStart(state.boardStart), 7) : addDays(state.boardStart, 1)));
       }
     };
     window.addEventListener('keydown', onKey);

@@ -1,56 +1,30 @@
 import { useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { X } from 'lucide-react';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText } from '../actions';
 import { tasksOn } from '../lib/model';
 import { addDays, shortDate, weekStart } from '../lib/dates';
-import { AddLine, CheckCircle } from './bits';
+import { AddLine } from './bits';
+import { ObjectiveList, weekLabel } from './Objectives';
 import { TaskCard } from './TaskCard';
 import { dayContainerId } from './DayColumn';
 
+/** The objectives of the week the board is showing. */
 function Objectives() {
   const today = useUI((s) => s.today);
-  const week = weekStart(today);
-  const all = useStore((s) => s.objectives);
-  const tasks = useStore((s) => s.tasks);
-  const addObjective = useStore((s) => s.addObjective);
-  const updateObjective = useStore((s) => s.updateObjective);
-  const deleteObjective = useStore((s) => s.deleteObjective);
-  const objectives = useMemo(() => all.filter((o) => o.weekStart === week), [all, week]);
-
+  const boardStart = useUI((s) => s.boardStart);
+  const week = weekStart(boardStart);
   return (
     <section className="side-section">
       <h3>
-        This week
+        {weekLabel(week, today)}
         <span className="side-sub">
           {shortDate(week)} to {shortDate(addDays(week, 6))}
         </span>
       </h3>
-      <ul className="objectives">
-        {objectives.map((o) => {
-          const linked = tasks.filter((t) => t.objectiveId === o.id);
-          const done = linked.filter((t) => t.done).length;
-          return (
-            <li key={o.id} className={o.done ? 'is-done' : ''}>
-              <CheckCircle checked={o.done} onChange={() => updateObjective(o.id, { done: !o.done })} label={`Objective: ${o.title}`} size={18} />
-              <span className="objective-title">{o.title}</span>
-              {linked.length > 0 && (
-                <span className="meta" title="Linked tasks done">
-                  {done}/{linked.length}
-                </span>
-              )}
-              <button type="button" className="icon-btn row-x" aria-label={`Delete objective ${o.title}`} onClick={() => deleteObjective(o.id)}>
-                <X size={14} />
-              </button>
-            </li>
-          );
-        })}
-        {objectives.length === 0 && <li className="side-empty">What would make this week a good one?</li>}
-      </ul>
-      <AddLine placeholder="Add an objective" label="Add a weekly objective" onAdd={(t) => addObjective(t, week)} />
+      <ObjectiveList week={week} />
     </section>
   );
 }

@@ -24,6 +24,8 @@ interface UI {
   boardStart: ISODate;
   openTaskId: string | null;
   focusTaskId: string | null;
+  /** When the task in focus was opened, for counting time on a task finished without starting the timer. */
+  focusOpenedAt: number | null;
   modal: Modal;
   sidebarOpen: boolean;
   timelineOpen: boolean;
@@ -58,6 +60,7 @@ export const useUI = create<UI>()(
       boardStart: todayISO(),
       openTaskId: null,
       focusTaskId: null,
+      focusOpenedAt: null,
       modal: null,
       sidebarOpen: atLeast(1200),
       timelineOpen: atLeast(900),
@@ -77,7 +80,7 @@ export const useUI = create<UI>()(
       goToday: () => set((s) => ({ boardStart: s.today, selectedDay: s.today, boardReset: s.boardReset + 1 })),
       openTask: (id) => set({ openTaskId: id }),
       openModal: (m) => set({ modal: m }),
-      focusOn: (id) => set({ focusTaskId: id, modal: 'focus', openTaskId: null }),
+      focusOn: (id) => set({ focusTaskId: id, focusOpenedAt: Date.now(), modal: 'focus', openTaskId: null }),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       toggleTimeline: () => set((s) => ({ timelineOpen: !s.timelineOpen })),
       notify: (message, ...actions) => set({ toast: { id: Date.now(), message, actions } }),

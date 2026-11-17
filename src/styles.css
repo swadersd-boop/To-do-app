@@ -788,10 +788,6 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
-.col-load-note {
-  display: block;
-}
-
 .col-load-text.is-over {
   color: var(--warn);
   font-weight: 600;
@@ -928,6 +924,27 @@ textarea::placeholder {
   flex: none;
   margin: 3px 3px 0;
   color: var(--ink-3);
+}
+
+.card-moved {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+}
+
+.card-moved .card-title {
+  color: var(--ink-2);
+}
+
+.moved-mark {
+  flex: none;
+  width: 20px;
+  color: var(--ink-3);
+  text-align: center;
 }
 
 .recap {
@@ -1141,16 +1158,6 @@ li:focus-within > .row-x {
   container-type: inline-size;
 }
 
-/* A finger is wider than the resize handle of a short block, so it would grab that instead of the block. */
-@media (pointer: coarse) {
-  .block.is-short .block-grip {
-    display: none;
-  }
-
-  .block-grip {
-    height: 12px;
-  }
-}
 
 .block.is-held {
   z-index: 5;
@@ -1269,6 +1276,31 @@ li:focus-within > .row-x {
   height: 7px;
   cursor: ns-resize;
 }
+
+/* On touch the resize handle is visible and big enough for a finger; the tiniest blocks have none. */
+@media (pointer: coarse) {
+  .block.is-tiny .block-grip {
+    display: none;
+  }
+
+  .block-grip {
+    height: 16px;
+  }
+
+  .block-grip::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 5px;
+    width: 28px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ink-3);
+    opacity: 0.6;
+    translate: -50% 0;
+  }
+}
+
 
 .drop-at {
   position: absolute;
@@ -1649,6 +1681,23 @@ li:focus-within > .row-x {
 .fit-verdict {
   font-size: 15px;
   font-weight: 550;
+}
+
+.week-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-weight: 700;
+}
+
+.week-mark.is-done {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .wont-fit {

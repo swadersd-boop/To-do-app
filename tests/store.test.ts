@@ -10,6 +10,8 @@ const find = (id: string) => store().tasks.find((t) => t.id === id)!;
 beforeEach(() => {
   vi.useRealTimers();
   store().reset();
+  // These tests use the real date, so rollover must not depend on whether today is a weekend.
+  store().setSettings({ weekendRollover: true });
 });
 
 describe('store', () => {
@@ -199,6 +201,56 @@ describe('store', () => {
     const id = store().addTask({ title: 'Brief', date: day, planned: 90, start: 9 * 60 + 15 });
     store().toggleDone(id);
     expect(find(id)).toMatchObject({ start: 555, blockMin: 30 });
+  });
+
+  it('draws a finished task where the work happened, not where it was planned', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 16, 17, 31));
+    const day = todayISO();
+    const id = store().addTask({ title: 'Plan team offsite', date: day, planned: 60, start: 15 * 60 + 45 });
+    store().updateTask(id, { actualSec: 70 * 60 });
+    store().toggleDone(id);
+    expect(find(id)).toMatchObject({ start: 16 * 60 + 20, blockMin: 70 });
+  });
+
+  it('remembers which tasks a day carried over', () => {
+    store().addTask({ title: 'Write appendix', date: yesterday, planned: 45 });
+    store().addTask({ title: 'Call Ana', date: yesterday, planned: 15 });
+    store().rollover(today);
+    expect(store().days[yesterday].carriedTitles).toEqual(['Write appendix', 'Call Ana']);
+  });
+
+  it('brings a restored backup up to date straight away', () => {
+    const data = { ...store(), tasks: [{ ...store().tasks[0], id: 'old', title: 'Left on Friday', date: addDays(today, -3), done: false, order: 0, start: null, fixed: false, planned: 30, actualSec: 0 }] };
+    store().importData(data);
+    expect(find('old').date).toBe(today);
+  });
+
+  it('leaves unfinished work on Friday over the weekend unless asked', () => {
+    const saturday = '2026-11-21';
+    const friday = '2026-11-20';
+    store().setSettings({ weekendRollover: false });
+    const id = store().addTask({ title: 'Appendix', date: friday, planned: 45 });
+    store().rollover(saturday);
+    expect(find(id).date).toBe(friday);
+    store().setSettings({ weekendRollover: true });
+    store().rollover(saturday);
+    expect(find(id).date).toBe(saturday);
+  });
+
+  it('gives a task started just before a replan a block that matches its slot', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 16, 11, 31));
+    const day = todayISO();
+    store().setSettings({ lunchStart: null, planAtPace: false });
+    const id = store().addTask({ title: 'Brief', date: day, planned: 60, start: 11 * 60 + 40 });
+    store().updateTask(id, { actualSec: 20 * 60 });
+    const next = store().addTask({ title: 'Emails', date: day, planned: 30 });
+    store().autoSchedule(day, 11 * 60 + 31);
+    // Under way since 11:40: it keeps that start and runs to 11:45 plus the 40 minutes it still needs.
+    expect(find(id)).toMatchObject({ start: 700, blockMin: 45 });
+    // The next task starts on the following quarter hour.
+    expect(find(next).start).toBe(750);
   });
 
   it('removes only the example tasks', () => {
