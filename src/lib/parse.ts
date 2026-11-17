@@ -16,8 +16,9 @@ export interface ParsedTask {
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 /** After one of these, a day word belongs to the sentence: "Prep slides for Friday". */
 const NOT_A_DATE_AFTER = new Set(['for', 'by', 'before', 'until', 'till', 'about', 'this', 'next', 'last', 'every', 'of', 'the']);
-const UNIT_WORD = /^(minutes?|mins?|hours?|hrs?)$/i;
-const CLOCK = String.raw`(\d{1,2})(?::(\d{2}))?(am|pm)?`;
+const UNIT_WORD = /^(minutes?|mins?|m|hours?|hrs?|h)$/i;
+const MINUTES_ONLY = /^(\d{1,2})(?:m|mins?|minutes?)$/i;
+const CLOCK = String.raw`(\d{1,2})(?:[:.](\d{2}))?(am|pm)?`;
 const AT_TIME = new RegExp(`^@${CLOCK}(?:-${CLOCK})?$`, 'i');
 
 function clock(hour: string, minute: string | undefined, half: string | undefined): number | null {
@@ -30,8 +31,9 @@ function clock(hour: string, minute: string | undefined, half: string | undefine
   return h * 60 + min;
 }
 
-/** "@14:30", "@2pm" or a range like "@12:30-13:30". */
+/** "@14:30", "@9.30", "@2pm", "@noon" or a range like "@12:30-13:30". */
 function parseAtTime(token: string): { start: number; length: number | null } | null {
+  if (/^@noon$/i.test(token)) return { start: 12 * 60, length: null };
   const m = AT_TIME.exec(token);
   if (!m) return null;
   // In "2-3pm" the start borrows the "pm"; in "11-1pm" it does not.
@@ -70,7 +72,8 @@ function parseDay(word: string, before: string | undefined, today: ISODate): ISO
 export function parseQuickAdd(input: string, today: ISODate): ParsedTask {
   const out: ParsedTask = { title: '', planned: null, channel: null, date: undefined, start: null };
   const kept: string[] = [];
-  const tokens = input.trim().split(/\s+/).filter(Boolean);
+  // "@ 5pm" is the same as "@5pm".
+  const tokens = input.trim().replace(/(^|\s)@\s+(?=\d|noon)/gi, '$1@').split(/\s+/).filter(Boolean);
   let rangeLength: number | null = null;
 
   for (let i = 0; i < tokens.length; i += 1) {
@@ -104,6 +107,12 @@ export function parseQuickAdd(input: string, today: ISODate): ParsedTask {
         const dur = parseDuration(token);
         if (dur !== null && dur > 0) {
           out.planned = dur;
+          // "1h 30m" written as two words.
+          const rest = MINUTES_ONLY.exec(tokens[i + 1] ?? '');
+          if (rest && /h/i.test(token) && !/\d[m]/i.test(token.replace(/^[\d.,]+h(?:ours?|rs?)?/i, ''))) {
+            out.planned += Number(rest[1]);
+            i += 1;
+          }
           continue;
         }
       }
@@ -124,4 +133,9 @@ export function parseQuickAdd(input: string, today: ISODate): ParsedTask {
 
   out.title = kept.join(' ');
   return out;
+}
+
+/** Words that look like they were meant as a time or duration but could not be read. */
+export function unreadTokens(title: string): string[] {
+  return title.split(/\s+/).filter((w) => /^@\S/.test(w) && !/^@\p{L}+$/u.test(w));
 }

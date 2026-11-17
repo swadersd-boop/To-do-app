@@ -8,10 +8,10 @@ Kalm runs entirely in your browser. There is no account and no server, and your 
 
 - **Day columns.** Each day is a column of tasks. Drag tasks between days, reorder them, or park them in the backlog.
 - **A workload check.** Every task has an estimate. Each day shows its total against the hours you say fit in a day, and warns when you are over.
-- **Timeboxing.** Drag a task onto the timeline to give it a start time. Drag the block to move it, pull its bottom edge to change the length, or press "Fill my day" to schedule everything in order. Running late? Press it again and the tasks whose time has passed move to the next free gaps.
+- **Timeboxing.** Drag a task onto the timeline to give it a start time. Drag the block to move it, pull its bottom edge to change the length, or press "Fill my day" to schedule everything in list order around your meetings and lunch. Running late? "Replan from now" lays out the rest of the day again from the current time. The top of your list keeps its place, and whatever no longer fits is named, with one tap to move it to tomorrow. On a phone, press and hold a block to move it; a swipe just scrolls.
 - **Fixed commitments.** A meeting or appointment gets a fixed time. "Fill my day" plans around it and never moves it, it does not count against your work hours, and it does not roll over if you miss it.
-- **A planning ritual.** Four steps each morning: deal with leftovers, choose today's tasks, check that they fit, commit. It ends with a plan you can copy as text or share as a link.
-- **Focus mode.** One task on screen with a timer that records the time you really spent.
+- **A planning ritual.** Four steps each morning: deal with leftovers, choose today's tasks, check that they fit, commit. Plan late in the day and it measures against the time you actually have left. Before you commit it shows what will not fit. It ends with a plan you can copy as text or share as a link.
+- **Focus mode.** One task on screen with a timer that records the time you really spent. Focus picks what the timeline says is next, never a meeting that has not started. A running timer always shows in a bar at the top, and one left on far too long asks before it counts more.
 - **A shutdown ritual.** Review what got done, decide what happens to the rest, write a few lines of reflection, copy the recap.
 - **Honest estimates.** Kalm compares your estimates with your tracked time. After a few finished tasks it tells you how far off you run, per channel, and the planning ritual uses that to forecast what a day will really cost.
 - **Weekly objectives, channels, steps and notes** on every task.
@@ -35,7 +35,7 @@ Write proposal 45m #work @14:30 tomorrow
 | `@14:30`, `@2pm`, `@12:30-13:30` | Gives the task a fixed time, like a meeting |
 | `today`, `tomorrow`, `fri`, `on Friday`, `later` as the last word | Picks the day, or the backlog for `later` |
 
-Normal sentences are left alone: "Review PR #482" and "Prep slides for Friday" keep their full titles.
+As you type, a line under the box shows what Kalm understood. Normal sentences are left alone: "Review PR #482" and "Prep slides for Friday" keep their full titles.
 
 ## Keyboard
 

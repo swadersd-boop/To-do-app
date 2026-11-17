@@ -5,10 +5,15 @@ import { todayISO } from './lib/dates';
 
 export type Modal = 'plan' | 'shutdown' | 'focus' | 'settings' | 'insights' | 'help' | null;
 
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export interface Toast {
   id: number;
   message: string;
-  action?: { label: string; run: () => void };
+  actions?: ToastAction[];
 }
 
 interface UI {
@@ -35,7 +40,7 @@ interface UI {
   focusOn: (id: string) => void;
   toggleSidebar: () => void;
   toggleTimeline: () => void;
-  notify: (message: string, action?: Toast['action']) => void;
+  notify: (message: string, ...actions: ToastAction[]) => void;
   dismissToast: () => void;
 }
 
@@ -70,7 +75,7 @@ export const useUI = create<UI>()(
       focusOn: (id) => set({ focusTaskId: id, modal: 'focus', openTaskId: null }),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       toggleTimeline: () => set((s) => ({ timelineOpen: !s.timelineOpen })),
-      notify: (message, action) => set({ toast: { id: Date.now(), message, action } }),
+      notify: (message, ...actions) => set({ toast: { id: Date.now(), message, actions } }),
       dismissToast: () => set({ toast: null }),
     }),
     {

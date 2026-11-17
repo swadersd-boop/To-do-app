@@ -79,6 +79,9 @@ export interface Settings {
   dayEnd: number;
   theme: 'system' | 'light' | 'dark';
   autoRollover: boolean;
+  /** A daily break that scheduling keeps free, in minutes from midnight. `null` start means no break. */
+  lunchStart?: number | null;
+  lunchLength?: number;
 }
 
 export interface Timer {

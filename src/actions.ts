@@ -2,7 +2,7 @@ import type { ISODate } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
 import { parseQuickAdd } from './lib/parse';
-import { relativeDay } from './lib/dates';
+import { addDays, relativeDay } from './lib/dates';
 
 /** Creates a task from one typed line. Returns its id, or null for an empty title. */
 export function addFromText(text: string, fallbackDate: ISODate | null, atTop = false): string | null {
@@ -43,4 +43,20 @@ export async function copyText(text: string, message = 'Copied'): Promise<void> 
   } catch {
     useUI.getState().notify('Could not copy. Select the text and copy it by hand.');
   }
+}
+
+/** Names a few tasks for a message: "A", "A and B", "A, B and 3 more". */
+export function nameTasks(tasks: { title: string }[]): string {
+  const quote = (t: { title: string }) => `"${t.title.length > 40 ? `${t.title.slice(0, 38)}…` : t.title}"`;
+  if (tasks.length <= 2) return tasks.map(quote).join(' and ');
+  return `${tasks.slice(0, 2).map(quote).join(', ')} and ${tasks.length - 2} more`;
+}
+
+/** Sends tasks that did not fit to tomorrow, with an undo. */
+export function moveToTomorrow(ids: string[]): void {
+  const store = useStore.getState();
+  const { today, notify } = useUI.getState();
+  const before = store.tasks;
+  for (const id of ids) store.sendTo(id, addDays(today, 1));
+  notify(`Moved ${ids.length} task${ids.length === 1 ? '' : 's'} to tomorrow`, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
 }

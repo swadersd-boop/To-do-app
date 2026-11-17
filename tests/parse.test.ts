@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseQuickAdd } from '../src/lib/parse';
+import { parseQuickAdd, unreadTokens } from '../src/lib/parse';
 
 // 2026-11-16 is a Monday.
 const TODAY = '2026-11-16';
@@ -91,7 +91,22 @@ describe('parseQuickAdd', () => {
     expect(parse('Odd @13:00-12:00').title).toBe('Odd @13:00-12:00');
   });
 
+  it('reads the looser forms people actually type', () => {
+    expect(parse('review 1h 30m')).toMatchObject({ title: 'review', planned: 90 });
+    expect(parse('gym 1 h')).toMatchObject({ title: 'gym', planned: 60 });
+    expect(parse('Standup @9.30')).toMatchObject({ title: 'Standup', start: 570 });
+    expect(parse('Call mum @ 5pm')).toMatchObject({ title: 'Call mum', start: 17 * 60 });
+    expect(parse('Lunch @noon')).toMatchObject({ title: 'Lunch', start: 12 * 60 });
+  });
+
   it('lets tokens sit in any order', () => {
     expect(parse('#admin 20m Expenses fri')).toMatchObject({ title: 'Expenses', planned: 20, channel: 'admin', date: '2026-11-20' });
+  });
+});
+
+describe('unreadTokens', () => {
+  it('points out time-like words that were not understood', () => {
+    expect(unreadTokens('Odd @15:00-14:00 thing')).toEqual(['@15:00-14:00']);
+    expect(unreadTokens('Ping @sam about it')).toEqual([]);
   });
 });

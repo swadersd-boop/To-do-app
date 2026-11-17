@@ -17,7 +17,14 @@ const SHOTS = fileURLToPath(new URL('./shots/', import.meta.url));
 mkdirSync(SHOTS, { recursive: true });
 const shot = async (page, name) => {
   // Let open and close animations finish so no screenshot is half faded.
-  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
   await page.screenshot({ path: `${SHOTS}${name}.png` });
 };
 
@@ -144,9 +151,13 @@ await page.waitForTimeout(300);
 assert.match(await page.locator('.focus-clock').innerText(), /^25:0\d$/, 'timer counted 25 minutes');
 await shot(page, '09-focus');
 await page.getByRole('button', { name: 'Done', exact: true }).click();
+// Done stops the clock. The next task waits until you press Start.
+await page.getByRole('button', { name: 'Start', exact: true }).waitFor();
+assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('kalm:v1')).state.timer), null, 'no timer runs after Done');
 await page.clock.fastForward('05:00');
 await page.getByRole('button', { name: 'Leave focus mode' }).click();
 assert.match(await cardIn(today, 'Write the launch brief').innerText(), /25m \//, 'tracked time shows on the card');
+assert.equal(await page.locator('.running').count(), 0, 'no timer bar when nothing is running');
 
 // 10. The shutdown ritual.
 await page.keyboard.press('s');
@@ -198,7 +209,7 @@ await page.keyboard.press('Escape');
 // 12d. A fixed commitment holds its time when the rest of the day is replanned.
 const meeting = page.locator('.block.is-fixed', { hasText: 'Reply to supplier emails' });
 const meetingTime = await meeting.getAttribute('aria-label');
-await page.getByRole('button', { name: 'Fill my day' }).click();
+await page.getByRole('button', { name: /Fill my day|Replan from now/ }).click();
 await page.locator('.block', { hasText: 'Review PR #482' }).waitFor();
 assert.equal(await meeting.getAttribute('aria-label'), meetingTime, 'the fixed block did not move');
 await page.getByRole('button', { name: 'Undo' }).click();
@@ -224,9 +235,14 @@ assert.equal(await page.locator('.drawer').count(), 0, 'Escape closes the drawer
 await hover.hover();
 await hover.getByRole('button', { name: 'Start focus' }).click();
 await page.locator('.focus-clock').waitFor();
+await page.getByRole('button', { name: 'Leave focus mode' }).click();
+// A running timer stays visible after leaving focus mode, and can be stopped from anywhere.
+await page.locator('.running', { hasText: 'Hover a card and press play' }).waitFor();
+await page.getByRole('button', { name: 'Open', exact: true }).click();
+await page.locator('.focus-clock').waitFor();
 await page.clock.fastForward('03:00:00');
 await page.getByRole('button', { name: 'Leave focus mode' }).click();
-const nag = page.getByRole('alert');
+const nag = page.locator('.running.is-asking');
 await nag.waitFor();
 await shot(page, '11b-timer-nag');
 await nag.getByRole('button', { name: /No, stop at/ }).click();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange } from '../src/lib/model';
+import { autoSchedule, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
 import { forecast, honesty } from '../src/lib/stats';
 import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
@@ -122,15 +122,16 @@ describe('rollover', () => {
 });
 
 describe('autoSchedule', () => {
-  it('places tasks in order around existing timeboxes', () => {
+  it('places tasks in list order around fixed commitments and breaks', () => {
     const day = [
       task({ id: 'a', order: 0, planned: 90 }),
-      task({ id: 'meeting', order: 1, planned: 45, start: 585 }),
+      task({ id: 'meeting', order: 1, planned: 45, start: 585, fixed: true }),
       task({ id: 'b', order: 2, planned: 25 }),
-      task({ id: 'done', order: 3, planned: 30, done: true }),
+      task({ id: 'done', order: 3, planned: 30, done: true, start: 480 }),
       task({ id: 'c', order: 4 }),
     ];
-    expect(autoSchedule(day, 550, 19 * 60)).toEqual({ a: 630, b: 720, c: 750 });
+    // Work happens in list order and a task is never split, so short gaps before a long task stay free.
+    expect(autoSchedule(day, 550, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ a: 630, b: 780, c: 810 });
   });
 
   it('leaves out what does not fit before the end of the day', () => {
@@ -155,9 +156,22 @@ describe('fixed commitments', () => {
       task({ id: 'loose', order: 3, planned: 45 }),
       task({ id: 'one-on-one', order: 4, planned: 30, start: 840, fixed: true }),
     ];
-    // It is 11:30. The 09:00 block slipped, the 15:00 block is still ahead.
-    const plan = autoSchedule(day, 690, 19 * 60);
-    expect(plan).toEqual({ slipped: 690, loose: 750 });
+    // It is 11:30: everything flexible is laid out again from now, in list order.
+    expect(autoSchedule(day, 690, 19 * 60)).toEqual({ slipped: 690, ahead: 750, loose: 780 });
+  });
+
+  it('when running late, keeps the top priority and drops the bottom of the list', () => {
+    const day = [
+      task({ id: 'proposal', order: 0, planned: 120, start: 540 }),
+      task({ id: 'review', order: 1, planned: 60, start: 660 }),
+      task({ id: 'refactor', order: 2, planned: 180, start: 1080 }),
+      task({ id: 'one-on-one', order: 3, planned: 30, start: 840, fixed: true }),
+    ];
+    const plan = autoSchedule(day, 690, 19 * 60, [{ start: 720, end: 780 }]);
+    // Two hours do not fit between lunch and the 14:00 one-to-one, so it starts after it.
+    expect(plan.proposal).toBe(870);
+    expect(plan.review).toBe(990);
+    expect(plan.refactor).toBeNull();
   });
 
   it('keep their time when moved to another day, and lose it in the backlog', () => {
@@ -287,5 +301,36 @@ describe('nextOccurrence', () => {
     expect(nextOccurrence('weekly', '2026-11-16', '2026-11-16')).toBe('2026-11-23');
     expect(nextOccurrence('weekly', '2026-11-16', '2026-11-18')).toBe('2026-11-23');
     expect(nextOccurrence('weekly', '2026-11-16', '2026-11-25')).toBe('2026-11-30');
+  });
+});
+
+describe('what to work on now', () => {
+  const day = [
+    task({ id: 'standup', order: 0, planned: 15, start: 570, fixed: true }),
+    task({ id: 'proposal', order: 1, planned: 120, start: 780 }),
+    task({ id: 'one-on-one', order: 2, planned: 30, start: 840, fixed: true }),
+    task({ id: 'dinner', order: 3, planned: 90, start: 1200, fixed: true }),
+    task({ id: 'emails', order: 4, planned: 20 }),
+    task({ id: 'finished', order: 5, done: true, start: 540 }),
+  ];
+
+  it('follows the timeline and leaves out what is over', () => {
+    expect(workQueue(day, 690).map((t) => t.id)).toEqual(['proposal', 'one-on-one', 'dinner', 'emails']);
+  });
+
+  it('never focuses on a meeting that has not started', () => {
+    expect(focusTarget(day, 690)!.id).toBe('proposal');
+    const onlyMeetingsAhead = day.filter((t) => t.id !== 'proposal' && t.id !== 'emails');
+    expect(focusTarget(onlyMeetingsAhead, 690)).toBeNull();
+    expect(focusTarget(onlyMeetingsAhead, 838)!.id).toBe('one-on-one');
+  });
+});
+
+describe('freeMinutes', () => {
+  it('subtracts commitments and breaks from the time that is left', () => {
+    const day = [task({ start: 840, planned: 30, fixed: true }), task({ start: 600, planned: 60 })];
+    expect(freeMinutes(day, 690, 19 * 60, [{ start: 720, end: 780 }])).toBe(450 - 60 - 30);
+    expect(freeMinutes([], 1110, 19 * 60)).toBe(30);
+    expect(freeMinutes([], 1200, 19 * 60)).toBe(0);
   });
 });

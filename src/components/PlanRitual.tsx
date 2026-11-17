@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Copy, Link2, Plus, Trash2 } from 'lucide-react';
+import { ArrowUp, Copy, Link2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import type { Task } from '../types';
-import { useStore } from '../store';
+import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
-import { addFromText, copyText, deleteWithUndo } from '../actions';
-import { tasksOn } from '../lib/model';
+import { addFromText, copyText, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
+import { autoSchedule as planDay, byTime, freeMinutes, tasksOn } from '../lib/model';
 import { addDays, longDate, weekStart } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, forecast, workTotal } from '../lib/stats';
@@ -50,7 +51,7 @@ export function PlanRitual() {
   const settings = useStore((s) => s.settings);
   const allObjectives = useStore((s) => s.objectives);
   const saved = useStore((s) => s.days[today]);
-  const { sendTo, setDay, autoSchedule } = useStore.getState();
+  const { sendTo, setDay, autoSchedule, moveTask } = useStore.getState();
 
   const [step, setStep] = useState(0);
   const [intention, setIntention] = useState(saved?.intention ?? '');
@@ -69,19 +70,33 @@ export function PlanRitual() {
   const fixed = fixedTotal(open);
   const missing = open.filter((t) => t.planned === null).length;
   const likely = forecast(open.filter((t) => !t.fixed), tasks);
-  const over = planned - settings.capacityMin;
+
+  // Planning late in the day compares against the time that is actually left.
+  const clock = new Date();
+  const nowMin = clock.getHours() * 60 + clock.getMinutes();
+  const from = Math.max(nowMin, settings.dayStart * 60);
+  const until = settings.dayEnd * 60;
+  const breaks = breaksOf(settings);
+  const available = Math.min(settings.capacityMin, freeMinutes(open, from, until, breaks));
+  // Only call it late once there is less time left than a normal day holds.
+  const late = available < settings.capacityMin;
+  const over = planned - available;
   const tomorrow = addDays(today, 1);
-  const summary = planText(today, open, channels, intention);
+
+  // What "Start my day" would do, so nothing is dropped by surprise.
+  const preview = useMemo(() => planDay(open, from, until, breaks), [open, from, until, breaks]);
+  const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
+  const ordered = byTime(open.map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)));
+  const summary = planText(today, ordered, channels, intention);
 
   const finish = () => {
     setDay(today, { plannedAt: new Date().toISOString(), intention: intention.trim() });
-    const now = new Date();
-    const left = fill ? autoSchedule(today, now.getHours() * 60 + now.getMinutes()).left : 0;
+    const left = fill ? autoSchedule(today, nowMin).left : [];
     close();
+    if (left.length === 0) return notify('Day planned. Go do the first thing.');
     notify(
-      left === 0
-        ? 'Day planned. Go do the first thing.'
-        : `Day planned, but ${left} task${left === 1 ? ' does' : 's do'} not fit before ${fmtClock(settings.dayEnd * 60)} and ${left === 1 ? 'has' : 'have'} no time.`,
+      `Day planned. ${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit before ${fmtClock(until)}.`,
+      { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
     );
   };
 
@@ -90,7 +105,7 @@ export function PlanRitual() {
       name: settings.name,
       date: today,
       intention: intention.trim(),
-      tasks: todays.map((t) => {
+      tasks: byTime(todays).map((t) => {
         const c = channels.find((x) => x.id === t.channelId);
         return { title: t.title, planned: t.planned, done: t.done, channel: c?.name ?? null, color: c?.color ?? null, start: t.start };
       }),
@@ -170,7 +185,8 @@ export function PlanRitual() {
           <div className="ritual-cols">
             <div>
               <h4>Today ({open.length})</h4>
-              <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => addFromText(t, today)} />
+              <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => addFromText(t, today)}
+        quick />
               <ul className="ritual-list">
                 {open.map((t) => (
                   <Row key={t.id} task={t}>
@@ -216,16 +232,16 @@ export function PlanRitual() {
 
       {step === 2 && (
         <div className="ritual-step">
-          <h3>Does it fit in one day?</h3>
+          <h3>{late ? 'Does it fit in what is left of today?' : 'Does it fit in one day?'}</h3>
           <div className="fit">
             <div className="fit-num">
               <strong className={over > 0 ? 'is-over' : ''}>{fmtMin(planned)}</strong>
               <span>
-                of work planned, of {fmtMin(settings.capacityMin)}
+                of work planned, {late ? `with ${fmtMin(available)} left today` : `of ${fmtMin(available)}`}
                 {fixed > 0 && `, plus ${fmtMin(fixed)} of fixed commitments`}
               </span>
             </div>
-            <LoadBar planned={planned} capacity={settings.capacityMin} />
+            <LoadBar planned={planned} capacity={available} />
             <p className={`fit-verdict ${over > 0 ? 'is-over' : ''}`}>
               {open.length === 0
                 ? 'Nothing is planned yet. Go back and pick at least one thing.'
@@ -240,9 +256,15 @@ export function PlanRitual() {
               </p>
             )}
           </div>
+          <p className="muted">The order below is your priority. Kalm schedules from the top, so if the day runs out, the bottom drops off.</p>
           <ul className="ritual-list">
-            {open.map((t) => (
+            {open.map((t, i) => (
               <Row key={t.id} task={t}>
+                {i > 0 && (
+                  <button type="button" className="icon-btn" aria-label={`Move ${t.title} to the top`} title="Do this first" onClick={() => moveTask(t.id, today, 0)}>
+                    <ArrowUp size={15} />
+                  </button>
+                )}
                 <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, tomorrow)}>
                   Tomorrow
                 </button>
@@ -264,8 +286,28 @@ export function PlanRitual() {
           </label>
           <label className="check-row">
             <input type="checkbox" checked={fill} onChange={(e) => setFill(e.target.checked)} />
-            Put the tasks on my timeline, starting now
+            Put the tasks on my timeline from {fmtClock(from)}, around meetings{breaks.length > 0 ? ' and lunch' : ''}
           </label>
+          {wontFit.length > 0 && (
+            <div className="wont-fit">
+              <p>
+                {wontFit.length === 1 ? 'This does' : `These ${wontFit.length} do`} not fit before {fmtClock(until)}:
+              </p>
+              <ul className="ritual-list">
+                {wontFit.map((t) => (
+                  <Row key={t.id} task={t}>
+                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, tomorrow)}>
+                      Tomorrow
+                    </button>
+                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
+                      Backlog
+                    </button>
+                  </Row>
+                ))}
+              </ul>
+            </div>
+          )}
+          <h4>Your plan</h4>
           <pre className="summary">{summary}</pre>
           <div className="row wrap">
             <button type="button" className="btn" onClick={() => copyText(summary, 'Plan copied')}>

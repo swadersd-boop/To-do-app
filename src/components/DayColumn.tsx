@@ -8,7 +8,7 @@ import { addFromText } from '../actions';
 import { occursOn, tasksOn } from '../lib/model';
 import { isWeekend, relativeDay, shortDate, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { fixedTotal, plannedTotal, workTotal } from '../lib/stats';
+import { actualTotal, fixedTotal, workTotal } from '../lib/stats';
 import { AddLine, LoadBar } from './bits';
 import { GhostCard, TaskCard } from './TaskCard';
 
@@ -63,7 +63,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
           {empty
             ? 'Nothing planned'
             : isPast
-              ? `${doneCount} done · ${fmtMin(plannedTotal(list))}`
+              ? `${doneCount} done${actualTotal(list) >= 1 ? ` · ${fmtMin(actualTotal(list))} tracked` : ''}`
               : over > 0
                 ? `${fmtMin(planned)} of work, ${fmtMin(over)} over`
                 : `${fmtMin(planned)} of ${fmtMin(capacity)}`}
@@ -96,6 +96,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
         placeholder={isToday ? 'Try: Email Sam 15m #work' : 'Add a task'}
         label={`Add a task to ${label}`}
         onAdd={(text) => addFromText(text, date)}
+        quick
       />
 
       <SortableContext items={list.map((t) => t.id)} strategy={verticalListSortingStrategy}>

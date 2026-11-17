@@ -14,6 +14,7 @@ import {
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
+  type Announcements,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import {
@@ -27,16 +28,17 @@ import {
   PanelLeft,
   Play,
   Settings as SettingsIcon,
+  Square,
   Sunrise,
 } from 'lucide-react';
 import type { ISODate, Task } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
-import { addDays, fromISO, todayISO } from './lib/dates';
-import { tasksOn } from './lib/model';
+import { addDays, fromISO, relativeDay, todayISO } from './lib/dates';
+import { focusTarget, tasksOn } from './lib/model';
 import { isShareHash } from './lib/share';
-import { fmtMin, snap } from './lib/time';
-import { useNow } from './components/bits';
+import { fmtMin, fmtStopwatch, snap } from './lib/time';
+import { useNow, useTracked } from './components/bits';
 import { Board } from './components/Board';
 import { Sidebar } from './components/Sidebar';
 import { PX_PER_MIN, Timeline } from './components/Timeline';
@@ -94,6 +96,26 @@ function useDayRollover() {
   }, [today, auto]);
 }
 
+const titleOf = (id: unknown) => useStore.getState().tasks.find((t) => t.id === id)?.title ?? 'Task';
+
+/** Where a droppable is, in words: "Tomorrow", "the backlog", "the timeline", or next to another task. */
+function placeOf(over: { id: unknown; data: { current?: Record<string, unknown> } } | null): string {
+  if (!over) return 'nowhere';
+  const data = over.data.current ?? {};
+  if (data.type === 'timeline') return 'the timeline';
+  const today = useUI.getState().today;
+  const date = (data.type === 'task' ? useStore.getState().tasks.find((t) => t.id === over.id)?.date : data.date) as ISODate | null | undefined;
+  const day = date === null || date === undefined ? 'the backlog' : relativeDay(date, today);
+  return data.type === 'task' ? `${day}, next to ${titleOf(over.id)}` : day;
+}
+
+const announcements: Announcements = {
+  onDragStart: ({ active }) => `Picked up ${titleOf(active.id)}.`,
+  onDragOver: ({ active, over }) => `${titleOf(active.id)} is over ${placeOf(over)}.`,
+  onDragEnd: ({ active, over }) => (over ? `Dropped ${titleOf(active.id)} on ${placeOf(over)}.` : `${titleOf(active.id)} was put back.`),
+  onDragCancel: ({ active }) => `Moving ${titleOf(active.id)} was cancelled. It is back where it was.`,
+};
+
 /** Prefer the timeline, then the card under the pointer, then the list. */
 const collision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
@@ -106,52 +128,98 @@ const collision: CollisionDetection = (args) => {
 function Toast() {
   const toast = useUI((s) => s.toast);
   const dismiss = useUI((s) => s.dismissToast);
+  const actions = toast?.actions ?? [];
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(dismiss, toast.action ? 7000 : 3500);
+    const id = window.setTimeout(dismiss, actions.length > 0 ? 9000 : 3500);
     return () => window.clearTimeout(id);
-  }, [toast, dismiss]);
+  }, [toast, dismiss, actions.length]);
   if (!toast) return null;
   return (
     <div className="toast" role="status">
-      {toast.message}
-      {toast.action && (
-        <button
-          type="button"
-          className="link-btn"
-          onClick={() => {
-            toast.action!.run();
-            dismiss();
-          }}
-        >
-          {toast.action.label}
-        </button>
+      <span>{toast.message}</span>
+      {actions.length > 0 && (
+        <span className="toast-actions">
+          {actions.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                a.run();
+                dismiss();
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
+        </span>
       )}
     </div>
   );
 }
 
-/** Asks about a timer that has run far longer than the task was meant to take. */
-function TimerNag() {
+/**
+ * Shows a running timer wherever you are in the app, so time is never logged
+ * by accident. When a timer runs far past the task's estimate it asks whether
+ * you are still working, and can drop the time since then.
+ */
+function RunningBar() {
   const timer = useStore((s) => s.timer);
   const task = useStore((s) => s.tasks.find((t) => t.id === s.timer?.taskId));
+  const modal = useUI((s) => s.modal);
+  const { seconds } = useTracked(task?.id ?? '', task?.actualSec ?? 0);
   const now = useNow(20_000, Boolean(timer));
-  if (!timer || !task) return null;
-  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
-  const dueAt = timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
-  if (now < dueAt) return null;
+
+  useEffect(() => {
+    if (!timer || !task) return;
+    document.title = `${fmtStopwatch(seconds)} · ${task.title}`;
+    return () => {
+      document.title = 'Kalm';
+    };
+  }, [seconds, task, timer]);
+
+  if (!timer || !task || modal === 'focus') return null;
   const { confirmTimer, stopTimer } = useStore.getState();
+  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
+  const askAt = timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
+  const asking = now >= askAt;
+
   return (
-    <div className="nag" role="alert">
-      <span>
-        The timer on "{task.title}" has been running for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
+    <div className={`running ${asking ? 'is-asking' : ''}`} role={asking ? 'alert' : 'status'}>
+      <span className="running-dot" aria-hidden="true" />
+      <span className="running-text">
+        {asking ? (
+          <>
+            The timer on <strong>{task.title}</strong> has run for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
+          </>
+        ) : (
+          <>
+            <span className="running-clock">{fmtStopwatch(seconds)}</span>
+            <strong>{task.title}</strong>
+          </>
+        )}
       </span>
-      <button type="button" className="btn" onClick={confirmTimer}>
-        Still working
-      </button>
-      <button type="button" className="btn" onClick={() => stopTimer(dueAt)} title="Stops the timer and drops the time since this question came up">
-        No, stop at {fmtMin((dueAt - timer.startedAt) / 60_000)}
-      </button>
+      {asking ? (
+        <>
+          <button type="button" className="btn" onClick={confirmTimer}>
+            Still working
+          </button>
+          <button type="button" className="btn" onClick={() => stopTimer(askAt)} title="Stops the timer and drops the time since this question came up">
+            No, stop at {fmtMin((askAt - timer.startedAt) / 60_000)}
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn btn-quiet" onClick={() => useUI.getState().focusOn(task.id)}>
+            Open
+          </button>
+          <button type="button" className="btn" onClick={() => stopTimer()} aria-label={`Stop the timer on ${task.title}`}>
+            <Square size={12} fill="currentColor" />
+            Stop
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -251,9 +319,10 @@ function Planner() {
 
   const startFocus = () => {
     const { tasks, timer, startTimer } = useStore.getState();
-    const first = (timer && tasks.find((t) => t.id === timer.taskId)) || tasksOn(tasks, ui.today).find((t) => !t.done);
+    const now = new Date();
+    const first = (timer && tasks.find((t) => t.id === timer.taskId)) || focusTarget(tasksOn(tasks, ui.today), now.getHours() * 60 + now.getMinutes());
     if (!first) {
-      ui.notify('Nothing planned for today yet.');
+      ui.notify('Nothing left to work on today.');
       return;
     }
     startTimer(first.id);
@@ -370,6 +439,8 @@ function Planner() {
     // A card that ends up back on its own day keeps its timebox.
     if (task.date === original.date && original.start !== null) useStore.getState().updateTask(id, { start: original.start });
     before.current = null;
+    // Keep the moved card in sight, which matters most when moving it with the keyboard.
+    requestAnimationFrame(() => document.querySelector(`[data-task-id="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
   };
 
   return (
@@ -389,10 +460,11 @@ function Planner() {
           </button>
         </p>
       )}
-      <TimerNag />
+      <RunningBar />
       <DndContext
         sensors={sensors}
         collisionDetection={collision}
+        accessibility={{ announcements, screenReaderInstructions: { draggable: 'To move a task, press Space, use the arrow keys, then press Space again to drop it, or Escape to cancel.' } }}
         autoScroll={{
           threshold: { x: 0.06, y: 0.2 },
           // The board must not run away while a card is held over the timeline.

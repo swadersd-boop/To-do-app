@@ -55,26 +55,31 @@ export function rollover(tasks: Task[], today: ISODate): Task[] {
   });
 }
 
+export interface Span {
+  start: number;
+  end: number;
+}
+
 /**
- * Plans the flexible part of a day. Unfinished tasks with no time yet, and
- * tasks whose time has already slipped past `from`, are placed in list order
- * into the gaps, starting at `from`. Fixed commitments, finished tasks and
- * timeboxes that are still ahead stay where they are.
+ * Replans the rest of a day. Every unfinished flexible task is laid out again
+ * from `from`, in list order, so the list order is the priority: the first
+ * task gets the first free slot, and whatever does not fit is what drops off,
+ * never the task you put on top. Fixed commitments, finished tasks and
+ * `breaks` (such as lunch) are worked around and never move.
  *
- * Returns a start for every task it handled: a number, or null when the task
- * did not fit before `until`.
+ * Returns a start for every flexible task: a number, or null when it did not
+ * fit before `until`.
  */
-export function autoSchedule(day: Task[], from: number, until: number): Record<string, number | null> {
-  const movable = (t: Task) => !t.done && !t.fixed && (t.start === null || t.start < from);
-  const busy = day
-    .filter((t) => t.start !== null && !movable(t))
-    .map((t) => ({ start: t.start!, end: t.start! + (t.planned ?? DEFAULT_BLOCK) }))
-    .sort((a, b) => a.start - b.start);
+export function autoSchedule(day: Task[], from: number, until: number, breaks: Span[] = []): Record<string, number | null> {
+  const busy: Span[] = [
+    ...breaks,
+    ...day.filter((t) => t.start !== null && (t.done || t.fixed)).map((t) => ({ start: t.start!, end: t.start! + (t.planned ?? DEFAULT_BLOCK) })),
+  ].sort((a, b) => a.start - b.start);
   const placed: Record<string, number | null> = {};
   let cursor = Math.ceil(from / 15) * 15;
 
   for (const task of day) {
-    if (!movable(task)) continue;
+    if (task.done || task.fixed) continue;
     const length = task.planned ?? DEFAULT_BLOCK;
     let start = cursor;
     for (const slot of busy) {
@@ -83,6 +88,7 @@ export function autoSchedule(day: Task[], from: number, until: number): Record<s
       start = Math.ceil(slot.end / 15) * 15;
     }
     if (start + length > until) {
+      // Smaller tasks further down the list may still fit, so keep going.
       placed[task.id] = null;
       continue;
     }
@@ -93,6 +99,51 @@ export function autoSchedule(day: Task[], from: number, until: number): Record<s
     cursor = Math.ceil((start + length) / 15) * 15;
   }
   return placed;
+}
+
+/** Minutes left for flexible work between `from` and `until`, after fixed commitments and breaks. */
+export function freeMinutes(day: Task[], from: number, until: number, breaks: Span[] = []): number {
+  const busy = [
+    ...breaks,
+    ...day.filter((t) => t.start !== null && t.fixed && !t.done).map((t) => ({ start: t.start!, end: t.start! + (t.planned ?? DEFAULT_BLOCK) })),
+  ]
+    .map((b) => ({ start: Math.max(b.start, from), end: Math.min(b.end, until) }))
+    .filter((b) => b.end > b.start)
+    .sort((a, b) => a.start - b.start);
+  let taken = 0;
+  let edge = from;
+  for (const b of busy) {
+    const start = Math.max(b.start, edge);
+    if (b.end > start) taken += b.end - start;
+    edge = Math.max(edge, b.end);
+  }
+  return Math.max(0, until - from - taken);
+}
+
+/**
+ * The order to work through a day: tasks with a time by their time, then the
+ * rest in list order. Finished tasks and commitments that are already over
+ * are left out.
+ */
+export function workQueue(day: Task[], now: number): Task[] {
+  const ended = (t: Task) => t.fixed && t.start !== null && t.start + (t.planned ?? DEFAULT_BLOCK) <= now;
+  return byTime(day.filter((t) => !t.done && !ended(t)));
+}
+
+/** Tasks with a time by their time, then the rest in list order. */
+export function byTime(tasks: Task[]): Task[] {
+  const timed = tasks.filter((t) => t.start !== null).sort((a, b) => a.start! - b.start! || a.order - b.order);
+  const loose = tasks.filter((t) => t.start === null).sort((a, b) => a.order - b.order);
+  return [...timed, ...loose];
+}
+
+/**
+ * What to work on now: the first task in the work queue, skipping
+ * commitments that have not started yet. A meeting at 14:00 is not
+ * something to focus on at 11:30.
+ */
+export function focusTarget(day: Task[], now: number): Task | null {
+  return workQueue(day, now).find((t) => !(t.fixed && t.start !== null && t.start > now + 5)) ?? null;
 }
 
 /** The hours the timeline has to show so that no timebox of the day is cut off. */

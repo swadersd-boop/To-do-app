@@ -3,7 +3,7 @@ import { Download, Trash2, Upload } from 'lucide-react';
 import { CHANNEL_COLORS, isPlannerData, snapshot, useStore } from '../store';
 import { useUI } from '../ui';
 import { addDays, shortDate, weekdayName } from '../lib/dates';
-import { fmtMin } from '../lib/time';
+import { fmtClock, fmtMin } from '../lib/time';
 import { actualTotal, honesty, MIN_SAMPLES, plannedTotal, type Honesty } from '../lib/stats';
 import { AddLine, Dialog } from './bits';
 
@@ -96,6 +96,37 @@ export function Settings() {
             </select>
           </label>
         </div>
+
+        <div className="row wrap">
+          <label className="stack">
+            <span>Lunch break</span>
+            <select
+              className="field"
+              value={settings.lunchStart ?? ''}
+              onChange={(e) => setSettings({ lunchStart: e.target.value === '' ? null : Number(e.target.value) })}
+            >
+              <option value="">No break</option>
+              {[690, 720, 750, 780, 810].map((m) => (
+                <option key={m} value={m}>
+                  {fmtClock(m)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {settings.lunchStart !== null && settings.lunchStart !== undefined && (
+            <label className="stack">
+              <span>for</span>
+              <select className="field" value={settings.lunchLength ?? 60} onChange={(e) => setSettings({ lunchLength: Number(e.target.value) })}>
+                {[30, 45, 60, 90].map((m) => (
+                  <option key={m} value={m}>
+                    {fmtMin(m)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        <p className="muted hint">Planning keeps the break free. Meetings can still go in it.</p>
 
         <label className="check-row">
           <input type="checkbox" checked={settings.autoRollover} onChange={(e) => setSettings({ autoRollover: e.target.checked })} />

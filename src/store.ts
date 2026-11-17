@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, todayISO, weekStart } from './lib/dates';
-import { autoSchedule, moveTask, nextOccurrence, rollover, tasksOn } from './lib/model';
+import { autoSchedule, moveTask, nextOccurrence, rollover, tasksOn, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -17,7 +17,15 @@ export const DEFAULT_SETTINGS: Settings = {
   dayEnd: 19,
   theme: 'system',
   autoRollover: true,
+  lunchStart: 12 * 60,
+  lunchLength: 60,
 };
+
+/** The breaks scheduling keeps free. */
+export function breaksOf(settings: Settings): Span[] {
+  if (settings.lunchStart === null || settings.lunchStart === undefined) return [];
+  return [{ start: settings.lunchStart, end: settings.lunchStart + (settings.lunchLength ?? 60) }];
+}
 
 export interface NewTask {
   title: string;
@@ -92,8 +100,8 @@ interface Actions {
   /** Moves a task to the end of a day or the backlog. */
   sendTo: (id: string, date: ISODate | null) => void;
   rollover: (today: ISODate) => void;
-  /** Gives flexible tasks a time. Returns how many got one and how many did not fit. */
-  autoSchedule: (date: ISODate, from: number) => { placed: number; left: number };
+  /** Replans the flexible tasks of a day. Returns how many got a time and which did not fit. */
+  autoSchedule: (date: ISODate, from: number) => { placed: number; left: Task[] };
   clearSchedule: (date: ISODate) => void;
   removeExamples: () => void;
 
@@ -265,10 +273,13 @@ export const useStore = create<Store>()(
 
       autoSchedule: (date, from) => {
         const s = get();
-        const plan = autoSchedule(tasksOn(s.tasks, date), Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60);
+        const day = tasksOn(s.tasks, date);
+        const plan = autoSchedule(day, Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60, breaksOf(s.settings));
         set({ tasks: s.tasks.map((t) => (plan[t.id] === undefined ? t : { ...t, start: plan[t.id] })) });
-        const starts = Object.values(plan);
-        return { placed: starts.filter((v) => v !== null).length, left: starts.filter((v) => v === null).length };
+        return {
+          placed: Object.values(plan).filter((v) => v !== null).length,
+          left: day.filter((t) => plan[t.id] === null),
+        };
       },
 
       clearSchedule: (date) =>

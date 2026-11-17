@@ -66,7 +66,8 @@ function Backlog() {
         Backlog
         <span className="side-sub">{list.length}</span>
       </h3>
-      <AddLine placeholder="Add for later" label="Add a task to the backlog" onAdd={(t) => addFromText(t, null, true)} />
+      <AddLine placeholder="Add for later" label="Add a task to the backlog" onAdd={(t) => addFromText(t, null, true)}
+        quick />
       <SortableContext items={list.map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <ul ref={setNodeRef} className={`col-list ${isOver ? 'is-over' : ''}`}>
           {list.map((t) => (

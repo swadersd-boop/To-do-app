@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Check, Pause, Play, SkipForward, X } from 'lucide-react';
 import { useStore } from '../store';
 import { useUI } from '../ui';
-import { tasksOn } from '../lib/model';
-import { fmtMin, fmtStopwatch } from '../lib/time';
-import { AddLine, ChannelPill, CheckCircle, useEscape, useTracked } from './bits';
+import { tasksOn, workQueue } from '../lib/model';
+import { fmtClock, fmtMin, fmtStopwatch } from '../lib/time';
+import { AddLine, ChannelPill, CheckCircle, useEscape, useNow, useTracked } from './bits';
 
 export function FocusMode() {
   const id = useUI((s) => s.focusTaskId);
@@ -14,7 +14,13 @@ export function FocusMode() {
   const { startTimer, stopTimer, toggleDone, updateTask, updateSubtask, addSubtask } = useStore.getState();
   const panel = useRef<HTMLDivElement>(null);
 
-  const queue = useMemo(() => tasksOn(tasks, task?.date ?? today).filter((t) => !t.done && t.id !== id), [tasks, task?.date, today, id]);
+  const clock = useNow(30_000);
+  const nowMin = new Date(clock).getHours() * 60 + new Date(clock).getMinutes();
+  // What comes next follows the timeline, not the order the list happens to be in.
+  const queue = useMemo(
+    () => workQueue(tasksOn(tasks, task?.date ?? today), nowMin).filter((t) => t.id !== id),
+    [tasks, task?.date, today, id, nowMin],
+  );
   const next = queue[0];
   const { seconds, running } = useTracked(task?.id ?? '', task?.actualSec ?? 0);
 
@@ -24,15 +30,6 @@ export function FocusMode() {
   useEffect(() => {
     panel.current?.focus();
   }, [id]);
-
-  useEffect(() => {
-    if (!task) return;
-    const previous = document.title;
-    document.title = `${fmtStopwatch(seconds)} · ${task.title}`;
-    return () => {
-      document.title = previous;
-    };
-  }, [seconds, task]);
 
   if (!task) {
     return (
@@ -51,15 +48,11 @@ export function FocusMode() {
   const pct = plannedSec > 0 ? Math.min(100, (seconds / plannedSec) * 100) : 0;
   const over = plannedSec > 0 && seconds > plannedSec;
 
+  // Finishing or skipping stops the clock. The next task waits until you press Start.
   const advance = (markDone: boolean) => {
     if (markDone) toggleDone(task.id);
-    else stopTimer();
-    if (next) {
-      startTimer(next.id);
-      useUI.getState().focusOn(next.id);
-    } else {
-      useUI.setState({ focusTaskId: null });
-    }
+    if (useStore.getState().timer) stopTimer();
+    useUI.setState({ focusTaskId: next ? next.id : null });
   };
 
   return (
@@ -90,7 +83,7 @@ export function FocusMode() {
             : over
               ? `${fmtMin((seconds - plannedSec) / 60)} over your ${fmtMin(task.planned)} estimate`
               : `of ${fmtMin(task.planned)} planned`}
-          {!running && ' · paused'}
+          {!running && (seconds < 1 ? ' · press Start when you begin' : ' · paused')}
         </p>
 
         <div className="row focus-actions">
@@ -100,12 +93,12 @@ export function FocusMode() {
               Pause
             </button>
           ) : (
-            <button type="button" className="btn" onClick={() => startTimer(task.id)}>
+            <button type="button" className={`btn ${seconds < 1 ? 'btn-primary' : ''}`} onClick={() => startTimer(task.id)}>
               <Play size={15} />
-              Resume
+              {seconds < 1 ? 'Start' : 'Resume'}
             </button>
           )}
-          <button type="button" className="btn btn-primary" onClick={() => advance(true)}>
+          <button type="button" className={`btn ${running || seconds >= 1 ? 'btn-primary' : ''}`} onClick={() => advance(true)}>
             <Check size={15} />
             Done
           </button>
@@ -138,7 +131,11 @@ export function FocusMode() {
           />
         </div>
 
-        <p className="focus-next">{next ? `Up next: ${next.title}` : 'This is the last task of the day.'}</p>
+        <p className="focus-next">
+          {next
+            ? `Up next: ${next.title}${next.start !== null ? ` at ${fmtClock(next.start)}` : ''}`
+            : 'This is the last task of the day.'}
+        </p>
       </div>
     </div>
   );

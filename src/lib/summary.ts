@@ -1,6 +1,6 @@
 import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
-import { fmtMin } from './time';
+import { fmtClock, fmtMin } from './time';
 import { actualTotal, plannedTotal } from './stats';
 
 const tag = (t: Task, channels: Channel[]) => {
@@ -13,7 +13,9 @@ export function planText(date: ISODate, tasks: Task[], channels: Channel[], inte
   const lines = [`Plan for ${longDate(date)}`];
   if (intention.trim()) lines.push(`Focus: ${intention.trim()}`);
   lines.push('');
-  tasks.forEach((t, i) => lines.push(`${i + 1}. ${t.title}${t.planned ? ` (${fmtMin(t.planned)})` : ''}${tag(t, channels)}`));
+  tasks.forEach((t, i) =>
+    lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${t.planned ? ` (${fmtMin(t.planned)})` : ''}${tag(t, channels)}`),
+  );
   if (tasks.length === 0) lines.push('Nothing planned yet.');
   const total = plannedTotal(tasks);
   if (total > 0) lines.push('', `Total: ${fmtMin(total)}`);

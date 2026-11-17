@@ -412,6 +412,31 @@ textarea::placeholder {
   color: var(--ink-3);
 }
 
+.add-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.add-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.add-hint-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.add-hint-warn {
+  color: var(--warn);
+}
+
 .add-plus {
   font-size: 17px;
   line-height: 1;
@@ -578,26 +603,66 @@ textarea::placeholder {
   font-size: 13px;
 }
 
-.nag {
-  position: fixed;
-  top: 12px;
-  left: 50%;
-  z-index: 70;
+.running {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  width: min(680px, calc(100vw - 24px));
-  padding: 12px 16px;
-  border: 1px solid var(--warn);
-  border-radius: 12px;
-  background: var(--warn-soft);
-  box-shadow: var(--shadow-lift);
-  translate: -50% 0;
+  gap: 6px 10px;
+  flex: none;
+  padding: 7px 16px 7px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--accent-soft);
 }
 
-.nag span {
-  flex: 1 1 260px;
+.running.is-asking {
+  background: var(--warn-soft);
+}
+
+.running-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.running.is-asking .running-dot {
+  background: var(--warn);
+}
+
+.running-text {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.running-text strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.running.is-asking .running-text {
+  display: block;
+}
+
+.running.is-asking .running-text strong {
+  white-space: normal;
+}
+
+.running-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .shell {
@@ -1007,6 +1072,21 @@ li:focus-within > .row-x {
   border-radius: 6px;
 }
 
+.break {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--line) 55%, transparent) 6px 7px);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
 .grid-hint {
   position: sticky;
   top: 40px;
@@ -1029,8 +1109,40 @@ li:focus-within > .row-x {
   box-shadow: var(--shadow);
   overflow: hidden;
   cursor: grab;
-  touch-action: none;
+  /* A swipe scrolls the timeline. A long press picks the block up. */
+  touch-action: pan-y;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  container-type: inline-size;
+}
+
+/* A finger is wider than the resize handle of a short block, so it would grab that instead of the block. */
+@media (pointer: coarse) {
+  .block.is-short .block-grip {
+    display: none;
+  }
+
+  .block-grip {
+    height: 12px;
+  }
+}
+
+.block.is-held {
+  z-index: 5;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* In a narrow block the title matters more than the time range. */
+@container (max-width: 200px) {
+  .block.is-short .block-time {
+    display: none;
+  }
+}
+
+.block.is-fixed .block-time {
+  color: var(--ink-2);
 }
 
 .block.is-short {
@@ -1474,6 +1586,21 @@ li:focus-within > .row-x {
   font-weight: 550;
 }
 
+.wont-fit {
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+
+.wont-fit > p {
+  font-weight: 600;
+}
+
+.wont-fit .ritual-row {
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
 .fit-forecast {
   color: var(--ink-2);
 }
@@ -1709,6 +1836,12 @@ li:focus-within > .row-x {
   box-shadow: var(--shadow-lift);
   transform: translateX(-50%);
   animation: rise 0.18s ease;
+}
+
+.toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
 }
 
 .toast .link-btn {

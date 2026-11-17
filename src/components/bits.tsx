@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, X } from 'lucide-react';
 import { useStore } from '../store';
-import { fmtMin, parseDuration } from '../lib/time';
+import { fmtClock, fmtMin, parseDuration } from '../lib/time';
+import { parseQuickAdd, unreadTokens } from '../lib/parse';
+import { relativeDay } from '../lib/dates';
+import { useUI } from '../ui';
 
 /** Re-renders on an interval while `active`, returning the current time. */
 export function useNow(intervalMs: number, active = true): number {
@@ -281,14 +284,20 @@ export function AddLine({
   onAdd,
   inputRef,
   label,
+  quick = false,
 }: {
   placeholder: string;
   onAdd: (text: string) => void;
   inputRef?: React.Ref<HTMLInputElement>;
   label: string;
+  /** Show what quick-add syntax was understood while typing. */
+  quick?: boolean;
 }) {
   const [text, setText] = useState('');
+  const hintId = useId();
+  const showHint = quick && text.trim().length > 0;
   return (
+    <div className="add-wrap">
     <form
       className="add-line"
       onSubmit={(e) => {
@@ -307,11 +316,40 @@ export function AddLine({
         onChange={(e) => setText(e.target.value)}
         placeholder={placeholder}
         aria-label={label}
+        aria-describedby={showHint ? hintId : undefined}
         onKeyDown={(e) => {
           if (e.key === 'Escape') (e.target as HTMLInputElement).blur();
         }}
       />
     </form>
+    {showHint && <QuickAddHint id={hintId} text={text} />}
+    </div>
+  );
+}
+
+/** A live reading of a quick-add line: what becomes the title, estimate, channel, time and day. */
+function QuickAddHint({ id, text }: { id: string; text: string }) {
+  const today = useUI((s) => s.today);
+  const channels = useStore((s) => s.channels);
+  const p = parseQuickAdd(text, today);
+  const unread = unreadTokens(p.title);
+  const wanted = p.channel?.toLowerCase() ?? '';
+  const known = channels.some((c) => c.name === wanted || c.name.startsWith(wanted));
+  const parts: string[] = [];
+  if (p.planned !== null) parts.push(fmtMin(p.planned));
+  if (p.channel) parts.push(`#${p.channel}${known ? '' : ' (new)'}`);
+  if (p.start !== null) parts.push(`fixed at ${fmtClock(p.start)}`);
+  if (p.date !== undefined) parts.push(p.date === null ? 'backlog' : relativeDay(p.date, today));
+  if (parts.length === 0 && unread.length === 0) return null;
+  return (
+    <p id={id} className="add-hint" aria-live="polite">
+      {parts.length > 0 && (
+        <span>
+          <span className="add-hint-title">{p.title || 'Untitled'}</span> · {parts.join(' · ')}
+        </span>
+      )}
+      {unread.length > 0 && <span className="add-hint-warn">Could not read {unread.join(', ')} as a time. Try @14:30 or @9-10am.</span>}
+    </p>
   );
 }
 

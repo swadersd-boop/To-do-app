@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { Pin, Wand2, X } from 'lucide-react';
 import type { Task } from '../types';
-import { useStore } from '../store';
+import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { DEFAULT_BLOCK, layoutBlocks, tasksOn, timelineRange } from '../lib/model';
 import { relativeDay, shortDate } from '../lib/dates';
 import { fmtClock, snap } from '../lib/time';
 import { useNow } from './bits';
+import { moveToTomorrow, nameTasks } from '../actions';
 
 /** Height of one minute on the timeline, in pixels. */
 export const PX_PER_MIN = 1.5;
@@ -32,18 +33,64 @@ function Block({
   const color = useStore((s) => s.channels.find((c) => c.id === task.channelId)?.color);
   const openTask = useUI((s) => s.openTask);
   const [gesture, setGesture] = useState<Gesture | null>(null);
+  const el = useRef<HTMLDivElement>(null);
+  /** A touch has to rest on a block for a moment before it moves it, so a swipe still scrolls. */
+  const press = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const armed = useRef(false);
 
   const start = gesture?.start ?? task.start!;
   const length = gesture?.length ?? task.planned ?? DEFAULT_BLOCK;
 
+  // React's touch handlers are passive, so blocking the scroll during a drag needs a real listener.
+  useEffect(() => {
+    const node = el.current;
+    if (!node) return;
+    const hold = (e: TouchEvent) => {
+      if (armed.current) e.preventDefault();
+    };
+    node.addEventListener('touchmove', hold, { passive: false });
+    return () => node.removeEventListener('touchmove', hold);
+  }, []);
+
+  const cancelPress = () => {
+    if (press.current) window.clearTimeout(press.current.timer);
+    press.current = null;
+  };
+
   const begin = (mode: Gesture['mode']) => (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setGesture({ id: task.id, mode, originY: e.clientY, start: task.start!, length: task.planned ?? DEFAULT_BLOCK, moved: false });
+    const target = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
+    const arm = (clientY: number) => {
+      armed.current = true;
+      try {
+        target.setPointerCapture(pointerId);
+      } catch {
+        // The pointer may already be gone.
+      }
+      setGesture({ id: task.id, mode, originY: clientY, start: task.start!, length: task.planned ?? DEFAULT_BLOCK, moved: false });
+    };
+    if (e.pointerType !== 'touch') return arm(e.clientY);
+    const { clientX, clientY } = e;
+    cancelPress();
+    press.current = {
+      x: clientX,
+      y: clientY,
+      timer: window.setTimeout(() => {
+        press.current = null;
+        navigator.vibrate?.(12);
+        arm(clientY);
+      }, 380),
+    };
   };
 
   const onMove = (e: React.PointerEvent) => {
+    if (press.current) {
+      // Moving before the hold completes means the person is scrolling.
+      if (Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 8) cancelPress();
+      return;
+    }
     if (!gesture) return;
     const dy = (e.clientY - gesture.originY) / PX_PER_MIN;
     if (!gesture.moved && Math.abs(dy) < 4) return;
@@ -58,6 +105,13 @@ function Block({
   };
 
   const onUp = () => {
+    if (press.current) {
+      // A short tap opens the task.
+      cancelPress();
+      openTask(task.id);
+      return;
+    }
+    armed.current = false;
     if (!gesture) return;
     if (!gesture.moved) {
       if (gesture.mode === 'move') openTask(task.id);
@@ -66,10 +120,17 @@ function Block({
     setGesture(null);
   };
 
+  const onCancel = () => {
+    cancelPress();
+    armed.current = false;
+    setGesture(null);
+  };
+
   const width = 100 / cols;
   return (
     <div
-      className={`block ${task.fixed ? 'is-fixed' : ''} ${task.done ? 'is-done' : ''} ${gesture?.moved ? 'is-moving' : ''} ${length <= 30 ? 'is-short' : ''} ${length <= 15 ? 'is-tiny' : ''}`}
+      ref={el}
+      className={`block ${task.fixed ? 'is-fixed' : ''} ${task.done ? 'is-done' : ''} ${gesture ? 'is-held' : ''} ${gesture?.moved ? 'is-moving' : ''} ${length <= 30 ? 'is-short' : ''} ${length <= 15 ? 'is-tiny' : ''}`}
       style={{
         top: (start - dayStartMin) * PX_PER_MIN,
         height: Math.max(STEP, length) * PX_PER_MIN - 2,
@@ -83,7 +144,7 @@ function Block({
       onPointerDown={begin('move')}
       onPointerMove={onMove}
       onPointerUp={onUp}
-      onPointerCancel={() => setGesture(null)}
+      onPointerCancel={onCancel}
       onKeyDown={(e) => {
         if (e.key === 'Enter') openTask(task.id);
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -157,15 +218,15 @@ export function Timeline() {
 
   const fill = () => {
     const before = useStore.getState().tasks;
-    const { placed, left } = autoSchedule(day, day === today ? nowMin : dayStartMin);
-    if (placed === 0 && left === 0) return notify('Everything already has a time.');
-    const until = `${fmtClock(settings.dayEnd * 60)}`;
-    if (placed === 0) return withUndo(`Nothing fits before ${until}. ${left} task${left === 1 ? ' has' : 's have'} no time.`, before);
-    withUndo(
-      left === 0
-        ? `Gave ${placed} task${placed === 1 ? '' : 's'} a time`
-        : `Gave ${placed} task${placed === 1 ? '' : 's'} a time. ${left} did not fit before ${until}.`,
-      before,
+    const from = day === today ? nowMin : dayStartMin;
+    const { placed, left } = autoSchedule(day, from);
+    const undo = { label: 'Undo', run: () => useStore.setState({ tasks: before }) };
+    if (left.length === 0) return notify(`Planned ${placed} task${placed === 1 ? '' : 's'} from ${fmtClock(Math.max(from, settings.dayStart * 60))}, in list order`, undo);
+    // Say exactly what dropped off, and offer the obvious way out.
+    notify(
+      `${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit before ${fmtClock(settings.dayEnd * 60)}.`,
+      { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
+      undo,
     );
   };
 
@@ -176,7 +237,7 @@ export function Timeline() {
   };
 
   const flexibleBoxed = boxed.some((t) => !t.done && !t.fixed);
-  const canFill = list.some((t) => !t.done && !t.fixed && (t.start === null || (day === today && t.start < nowMin)));
+  const canFill = list.some((t) => !t.done && !t.fixed);
 
   return (
     <aside className="timeline" aria-label={`Timeline for ${relativeDay(day, today)}`}>
@@ -196,10 +257,10 @@ export function Timeline() {
             className="btn btn-quiet"
             onClick={fill}
             disabled={!canFill}
-            title="Give a time to every task without one, and to tasks whose time has passed. Fixed times do not move."
+            title="Lays out the rest of the day in list order, from now. Fixed times and lunch stay where they are."
           >
             <Wand2 size={14} />
-            Fill my day
+            {day === today && boxed.some((t) => !t.done && !t.fixed) ? 'Replan from now' : 'Fill my day'}
           </button>
         </div>
       </header>
@@ -218,6 +279,18 @@ export function Timeline() {
             </div>
           ))}
           <div className="grid-lane">
+            {breaksOf(settings)
+              .filter((b) => b.end > dayStartMin && b.start < dayEndMin)
+              .map((b) => (
+                <div
+                  key={b.start}
+                  className="break"
+                  style={{ top: (Math.max(b.start, dayStartMin) - dayStartMin) * PX_PER_MIN, height: (Math.min(b.end, dayEndMin) - Math.max(b.start, dayStartMin)) * PX_PER_MIN }}
+                  aria-hidden="true"
+                >
+                  Lunch
+                </div>
+              ))}
             {boxed.map((t) => (
               <Block key={t.id} task={t} col={layout[t.id]?.col ?? 0} cols={layout[t.id]?.cols ?? 1} dayStartMin={dayStartMin} dayEndMin={dayEndMin} />
             ))}
