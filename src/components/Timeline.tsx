@@ -224,7 +224,7 @@ export function Timeline() {
     if (left.length === 0) return notify(`Planned ${placed} task${placed === 1 ? '' : 's'} from ${fmtClock(Math.max(from, settings.dayStart * 60))}, in list order`, undo);
     // Say exactly what dropped off, and offer the obvious way out.
     notify(
-      `${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit before ${fmtClock(settings.dayEnd * 60)}.`,
+      `${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit in the rest of today.`,
       { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
       undo,
     );

@@ -646,12 +646,28 @@ textarea::placeholder {
   font-weight: 600;
 }
 
-.running.is-asking .running-text {
-  display: block;
+.timer-question {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  flex: 1;
+  min-width: 0;
 }
 
-.running.is-asking .running-text strong {
-  white-space: normal;
+.timer-question > span:first-child {
+  flex: 1 1 240px;
+}
+
+.focus-inner > .timer-question {
+  flex: none;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  text-align: left;
 }
 
 .running-clock {
@@ -1089,8 +1105,12 @@ li:focus-within > .row-x {
 
 .grid-hint {
   position: sticky;
-  top: 40px;
-  margin: 40px 18px 0;
+  z-index: 5;
+  top: 12px;
+  margin: 12px 18px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
   color: var(--ink-3);
   font-size: 13px;
   text-align: center;
@@ -1368,6 +1388,23 @@ li:focus-within > .row-x {
   gap: 10px 16px;
 }
 
+.share-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.help-link {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .channel-list {
   display: flex;
   flex-direction: column;
@@ -1449,8 +1486,9 @@ li:focus-within > .row-x {
 /* ---------- Rituals ---------- */
 
 /* A fixed height keeps the dialog from jumping as the steps change length. */
+/* Enough height that the dialog barely moves between steps, without a short step looking empty. */
 .dialog.ritual {
-  height: min(88dvh, 720px);
+  min-height: min(86dvh, 520px);
 }
 
 .stepper {
@@ -1897,10 +1935,23 @@ li:focus-within > .row-x {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
   padding: 11px 0;
   border-bottom: 1px solid var(--line);
   counter-increment: item;
+}
+
+.shared-title {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.shared-card {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .shared-title::before {
@@ -2034,7 +2085,33 @@ li:focus-within > .row-x {
     bottom: calc(74px + env(safe-area-inset-bottom));
   }
 
-  /* Bigger touch areas than the controls look. */
+  /* Bigger controls on touch screens, plus touch areas larger than they look. */
+  .check {
+    width: 24px !important;
+    height: 24px !important;
+  }
+
+  .chip {
+    height: 28px;
+    padding: 0 10px;
+  }
+
+  .block-x {
+    width: 28px;
+    height: 28px;
+    top: 50%;
+    translate: 0 -50%;
+  }
+
+  .block {
+    padding-right: 34px;
+  }
+
+  .check-row input {
+    width: 22px;
+    height: 22px;
+  }
+
   .check::after,
   .chip-btn::after,
   .card-play::after,

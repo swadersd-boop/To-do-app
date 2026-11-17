@@ -37,8 +37,8 @@ import { useUI } from './ui';
 import { addDays, fromISO, relativeDay, todayISO } from './lib/dates';
 import { focusTarget, tasksOn } from './lib/model';
 import { isShareHash } from './lib/share';
-import { fmtMin, fmtStopwatch, snap } from './lib/time';
-import { useNow, useTracked } from './components/bits';
+import { fmtStopwatch, snap } from './lib/time';
+import { TimerQuestion, timerAskAt, useNow, useTracked } from './components/bits';
 import { Board } from './components/Board';
 import { Sidebar } from './components/Sidebar';
 import { PX_PER_MIN, Timeline } from './components/Timeline';
@@ -81,9 +81,13 @@ function useDayRollover() {
   const auto = useStore((s) => s.settings.autoRollover);
   useEffect(() => {
     const tick = () => {
-      const now = todayISO();
+      const clock = new Date();
+      const now = todayISO(clock);
       if (now !== useUI.getState().today) useUI.getState().setToday(now);
+      // Meetings that are over count as done, without anyone ticking them off.
+      useStore.getState().settleCommitments(now, clock.getHours() * 60 + clock.getMinutes());
     };
+    tick();
     const id = window.setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', tick);
     return () => {
@@ -180,46 +184,28 @@ function RunningBar() {
   }, [seconds, task, timer]);
 
   if (!timer || !task || modal === 'focus') return null;
-  const { confirmTimer, stopTimer } = useStore.getState();
-  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
-  const askAt = timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
-  const asking = now >= askAt;
-
+  if (now >= timerAskAt(timer, task)) {
+    return (
+      <div className="running is-asking">
+        <span className="running-dot" aria-hidden="true" />
+        <TimerQuestion />
+      </div>
+    );
+  }
   return (
-    <div className={`running ${asking ? 'is-asking' : ''}`} role={asking ? 'alert' : 'status'}>
+    <div className="running" role="status">
       <span className="running-dot" aria-hidden="true" />
       <span className="running-text">
-        {asking ? (
-          <>
-            The timer on <strong>{task.title}</strong> has run for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
-          </>
-        ) : (
-          <>
-            <span className="running-clock">{fmtStopwatch(seconds)}</span>
-            <strong>{task.title}</strong>
-          </>
-        )}
+        <span className="running-clock">{fmtStopwatch(seconds)}</span>
+        <strong>{task.title}</strong>
       </span>
-      {asking ? (
-        <>
-          <button type="button" className="btn" onClick={confirmTimer}>
-            Still working
-          </button>
-          <button type="button" className="btn" onClick={() => stopTimer(askAt)} title="Stops the timer and drops the time since this question came up">
-            No, stop at {fmtMin((askAt - timer.startedAt) / 60_000)}
-          </button>
-        </>
-      ) : (
-        <>
-          <button type="button" className="btn btn-quiet" onClick={() => useUI.getState().focusOn(task.id)}>
-            Open
-          </button>
-          <button type="button" className="btn" onClick={() => stopTimer()} aria-label={`Stop the timer on ${task.title}`}>
-            <Square size={12} fill="currentColor" />
-            Stop
-          </button>
-        </>
-      )}
+      <button type="button" className="btn btn-quiet" onClick={() => useUI.getState().focusOn(task.id)}>
+        Open
+      </button>
+      <button type="button" className="btn" onClick={() => useStore.getState().stopTimer()} aria-label={`Stop the timer on ${task.title}`}>
+        <Square size={12} fill="currentColor" />
+        Stop
+      </button>
     </div>
   );
 }
@@ -230,6 +216,13 @@ function Header({ onFocus }: { onFocus: () => void }) {
   const month = fromISO(ui.boardStart).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const planned = Boolean(log?.plannedAt);
   const closed = Boolean(log?.shutdownAt);
+  // One button stands out at a time: plan in the morning, focus while you work, shut down near the end.
+  const dayEnd = useStore((s) => s.settings.dayEnd);
+  const openWork = useStore((s) => s.tasks.some((t) => t.date === ui.today && !t.done && !t.fixed));
+  const clock = useNow(60_000);
+  const nowMin = new Date(clock).getHours() * 60 + new Date(clock).getMinutes();
+  const windDown = planned && !closed && (nowMin >= dayEnd * 60 - 90 || !openWork);
+  const working = planned && !closed && !windDown;
 
   return (
     <header className="top">
@@ -268,7 +261,7 @@ function Header({ onFocus }: { onFocus: () => void }) {
         </button>
         <button
           type="button"
-          className={`btn ${closed ? 'is-complete' : planned ? 'btn-primary' : ''}`}
+          className={`btn ${closed ? 'is-complete' : windDown ? 'btn-primary' : ''}`}
           onClick={() => ui.openModal('shutdown')}
           aria-label={closed ? 'Closed' : 'Shut down'}
         >
@@ -276,7 +269,7 @@ function Header({ onFocus }: { onFocus: () => void }) {
           <span className="label">{closed ? 'Closed' : 'Shut down'}</span>
           {closed && <Check size={13} className="tick" />}
         </button>
-        <button type="button" className="btn" onClick={onFocus} aria-label="Focus">
+        <button type="button" className={`btn ${working ? 'btn-primary' : ''}`} onClick={onFocus} aria-label="Focus">
           <Play size={14} fill="currentColor" />
           <span className="label">Focus</span>
         </button>

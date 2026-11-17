@@ -6,6 +6,15 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 /** Block length on the timeline when a task has no estimate yet. */
 export const DEFAULT_BLOCK = 30;
 
+/** How long a task's timebox is. */
+export const lengthOf = (t: Task): number => t.blockMin ?? t.planned ?? DEFAULT_BLOCK;
+
+/** The time a task still needs: its estimate minus what was already tracked, in 5-minute steps. */
+export function remainingOf(t: Task): number {
+  if (t.planned === null || t.actualSec < 60) return t.planned ?? DEFAULT_BLOCK;
+  return Math.max(15, Math.ceil((t.planned - t.actualSec / 60) / 5) * 5);
+}
+
 /** Tasks for one day (or the backlog when `date` is null), in display order. */
 export function tasksOn(tasks: Task[], date: ISODate | null): Task[] {
   return tasks.filter((t) => t.date === date).sort((a, b) => a.order - b.order);
@@ -51,7 +60,9 @@ export function rollover(tasks: Task[], today: ISODate): Task[] {
   return tasks.map((t) => {
     const next = order.get(t.id);
     if (next === undefined) return t;
-    return moved.has(t.id) ? { ...t, date: today, order: next, start: null, rolled: t.rolled + 1 } : { ...t, order: next };
+    return moved.has(t.id)
+      ? { ...t, date: today, order: next, start: null, blockMin: null, rolled: t.rolled + 1, trackedBefore: t.actualSec }
+      : { ...t, order: next };
   });
 }
 
@@ -62,41 +73,54 @@ export interface Span {
 
 /**
  * Replans the rest of a day. Every unfinished flexible task is laid out again
- * from `from`, in list order, so the list order is the priority: the first
- * task gets the first free slot, and whatever does not fit is what drops off,
- * never the task you put on top. Fixed commitments, finished tasks and
- * `breaks` (such as lunch) are worked around and never move.
+ * from `from`, and the list order is the priority: the first task picks its
+ * slot first, and whatever does not fit is what drops off, never the task you
+ * put on top. A task that was partly done books only the time it still needs.
+ * Fixed commitments, finished tasks and `breaks` (such as lunch) are worked
+ * around and never move. `budget` caps the minutes of work placed.
  *
  * Returns a start for every flexible task: a number, or null when it did not
- * fit before `until`.
+ * fit before `until` or within `budget`.
  */
-export function autoSchedule(day: Task[], from: number, until: number, breaks: Span[] = []): Record<string, number | null> {
+export function autoSchedule(
+  day: Task[],
+  from: number,
+  until: number,
+  breaks: Span[] = [],
+  budget = Number.POSITIVE_INFINITY,
+): Record<string, number | null> {
   const busy: Span[] = [
     ...breaks,
-    ...day.filter((t) => t.start !== null && (t.done || t.fixed)).map((t) => ({ start: t.start!, end: t.start! + (t.planned ?? DEFAULT_BLOCK) })),
-  ].sort((a, b) => a.start - b.start);
+    ...day.filter((t) => t.start !== null && (t.done || t.fixed)).map((t) => ({ start: t.start!, end: t.start! + lengthOf(t) })),
+  ];
   const placed: Record<string, number | null> = {};
-  let cursor = Math.ceil(from / 15) * 15;
+  const first = Math.ceil(from / 15) * 15;
+  let used = 0;
 
   for (const task of day) {
     if (task.done || task.fixed) continue;
-    const length = task.planned ?? DEFAULT_BLOCK;
-    let start = cursor;
+    const length = remainingOf(task);
+    // Past the day's capacity, the rest waits for another day even if the clock has room.
+    if (used + length > budget) {
+      placed[task.id] = null;
+      continue;
+    }
+    // Each task, in priority order, takes the earliest gap it fits in, so short
+    // gaps before a meeting get used by a short task further down the list.
+    busy.sort((a, b) => a.start - b.start);
+    let start = first;
     for (const slot of busy) {
       if (slot.end <= start) continue;
       if (slot.start >= start + length) break;
       start = Math.ceil(slot.end / 15) * 15;
     }
     if (start + length > until) {
-      // Smaller tasks further down the list may still fit, so keep going.
       placed[task.id] = null;
       continue;
     }
     placed[task.id] = start;
     busy.push({ start, end: start + length });
-    busy.sort((a, b) => a.start - b.start);
-    // Round up to the next quarter hour, which leaves a short break after odd lengths.
-    cursor = Math.ceil((start + length) / 15) * 15;
+    used += length;
   }
   return placed;
 }
@@ -105,7 +129,7 @@ export function autoSchedule(day: Task[], from: number, until: number, breaks: S
 export function freeMinutes(day: Task[], from: number, until: number, breaks: Span[] = []): number {
   const busy = [
     ...breaks,
-    ...day.filter((t) => t.start !== null && t.fixed && !t.done).map((t) => ({ start: t.start!, end: t.start! + (t.planned ?? DEFAULT_BLOCK) })),
+    ...day.filter((t) => t.start !== null && t.fixed && !t.done).map((t) => ({ start: t.start!, end: t.start! + lengthOf(t) })),
   ]
     .map((b) => ({ start: Math.max(b.start, from), end: Math.min(b.end, until) }))
     .filter((b) => b.end > b.start)
@@ -126,7 +150,7 @@ export function freeMinutes(day: Task[], from: number, until: number, breaks: Sp
  * are left out.
  */
 export function workQueue(day: Task[], now: number): Task[] {
-  const ended = (t: Task) => t.fixed && t.start !== null && t.start + (t.planned ?? DEFAULT_BLOCK) <= now;
+  const ended = (t: Task) => t.fixed && t.start !== null && t.start + lengthOf(t) <= now;
   return byTime(day.filter((t) => !t.done && !ended(t)));
 }
 
@@ -153,7 +177,7 @@ export function timelineRange(day: Task[], dayStart: number, dayEnd: number): { 
   for (const t of day) {
     if (t.start === null) continue;
     start = Math.min(start, Math.floor(t.start / 60));
-    end = Math.max(end, Math.min(24, Math.ceil((t.start + (t.planned ?? DEFAULT_BLOCK)) / 60)));
+    end = Math.max(end, Math.min(24, Math.ceil((t.start + lengthOf(t)) / 60)));
   }
   return { start, end };
 }

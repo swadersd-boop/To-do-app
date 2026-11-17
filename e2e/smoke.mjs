@@ -206,6 +206,21 @@ await pr.waitFor();
 assert.match(await pr.innerText(), /20m/, 'a duration with a space is read');
 await page.keyboard.press('Escape');
 
+// 12c2. A meeting is done once it is over, and a repeating one shows up tomorrow without a tick.
+await page.keyboard.press('n');
+await page.keyboard.type('Standup @8:30 15m #work');
+await page.keyboard.press('Enter');
+await page.keyboard.press('Escape');
+await page.clock.fastForward('00:31');
+const standup = cardIn(today, 'Standup');
+await standup.locator('.card.is-done').waitFor();
+await standup.click();
+await page.getByRole('dialog').getByLabel('Repeats').selectOption('weekdays');
+await page.keyboard.press('Escape');
+await page.clock.fastForward('00:31');
+await tomorrow.locator('.card-wrap', { hasText: 'Standup' }).waitFor();
+assert.match(await tomorrow.locator('.card-wrap', { hasText: 'Standup' }).innerText(), /08:30/, 'tomorrow has a real standup at 08:30');
+
 // 12d. A fixed commitment holds its time when the rest of the day is replanned.
 const meeting = page.locator('.block.is-fixed', { hasText: 'Reply to supplier emails' });
 const meetingTime = await meeting.getAttribute('aria-label');

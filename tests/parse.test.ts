@@ -99,6 +99,14 @@ describe('parseQuickAdd', () => {
     expect(parse('Lunch @noon')).toMatchObject({ title: 'Lunch', start: 12 * 60 });
   });
 
+  it('reads "at 2pm", "@ 3 pm" and common spellings of tomorrow', () => {
+    expect(parse('call bank @ 3 pm')).toMatchObject({ title: 'call bank', start: 15 * 60 });
+    expect(parse('1:1 with Ana at 2pm')).toMatchObject({ title: '1:1 with Ana', start: 14 * 60 });
+    expect(parse('Review at 14:30 30m')).toMatchObject({ title: 'Review', start: 870, planned: 30 });
+    expect(parse('Arrive at 2 sites')).toMatchObject({ title: 'Arrive at 2 sites', start: null });
+    expect(parse('Book dentist tmrw')).toMatchObject({ title: 'Book dentist', date: '2026-11-17' });
+  });
+
   it('lets tokens sit in any order', () => {
     expect(parse('#admin 20m Expenses fri')).toMatchObject({ title: 'Expenses', planned: 20, channel: 'admin', date: '2026-11-20' });
   });

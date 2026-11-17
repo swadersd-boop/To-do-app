@@ -53,3 +53,16 @@ export const workTotal = (tasks: Task[]) => plannedTotal(tasks.filter((t) => !t.
 /** Planned minutes taken by fixed commitments such as meetings. */
 export const fixedTotal = (tasks: Task[]) => plannedTotal(tasks.filter((t) => t.fixed));
 export const actualTotal = (tasks: Task[]) => tasks.reduce((sum, t) => sum + t.actualSec / 60, 0);
+
+/** Seconds of a task tracked on its current day, leaving out days it was carried from. */
+export const todaySec = (t: Task) => Math.max(0, t.actualSec - (t.trackedBefore ?? 0));
+
+/**
+ * Minutes tracked on one day: the time on its tasks, plus time on tasks that
+ * were later carried to another day. Pass that day's log for the second part.
+ */
+export const trackedOn = (tasks: Task[], log?: { carriedSec?: number }) =>
+  (tasks.reduce((sum, t) => sum + todaySec(t), 0) + (log?.carriedSec ?? 0)) / 60;
+
+/** To-dos only: meetings and other fixed commitments are not counted as work done or left. */
+export const todos = (tasks: Task[]) => tasks.filter((t) => !t.fixed);

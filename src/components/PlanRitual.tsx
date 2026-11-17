@@ -56,6 +56,9 @@ export function PlanRitual() {
   const [step, setStep] = useState(0);
   const [intention, setIntention] = useState(saved?.intention ?? '');
   const [fill, setFill] = useState(true);
+  /** Tasks left out of the share link, such as personal ones. */
+  const [unshared, setUnshared] = useState<Set<string>>(new Set());
+  const [choosing, setChoosing] = useState(false);
 
   const todays = useMemo(() => tasksOn(tasks, today), [tasks, today]);
   const open = todays.filter((t) => !t.done);
@@ -84,7 +87,10 @@ export function PlanRitual() {
   const tomorrow = addDays(today, 1);
 
   // What "Start my day" would do, so nothing is dropped by surprise.
-  const preview = useMemo(() => planDay(open, from, until, breaks), [open, from, until, breaks]);
+  // The same rule "Start my day" uses: no more work than the day's capacity, and only the time that is left.
+  const doneToday = todays.filter((t) => t.done && !t.fixed).reduce((sum, t) => sum + (t.planned ?? 0), 0);
+  const budget = Math.max(0, settings.capacityMin - doneToday);
+  const preview = useMemo(() => planDay(open, from, until, breaks, budget), [open, from, until, breaks, budget]);
   const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
   const ordered = byTime(open.map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)));
   const summary = planText(today, ordered, channels, intention);
@@ -95,7 +101,7 @@ export function PlanRitual() {
     close();
     if (left.length === 0) return notify('Day planned. Go do the first thing.');
     notify(
-      `Day planned. ${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit before ${fmtClock(until)}.`,
+      `Day planned. ${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit today.`,
       { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
     );
   };
@@ -105,7 +111,7 @@ export function PlanRitual() {
       name: settings.name,
       date: today,
       intention: intention.trim(),
-      tasks: byTime(todays).map((t) => {
+      tasks: byTime(todays.filter((t) => !unshared.has(t.id))).map((t) => {
         const c = channels.find((x) => x.id === t.channelId);
         return { title: t.title, planned: t.planned, done: t.done, channel: c?.name ?? null, color: c?.color ?? null, start: t.start };
       }),
@@ -291,7 +297,7 @@ export function PlanRitual() {
           {wontFit.length > 0 && (
             <div className="wont-fit">
               <p>
-                {wontFit.length === 1 ? 'This does' : `These ${wontFit.length} do`} not fit before {fmtClock(until)}:
+                {wontFit.length === 1 ? 'This does' : `These ${wontFit.length} do`} not fit in {late ? 'what is left of today' : `your ${fmtMin(settings.capacityMin)} of work`}:
               </p>
               <ul className="ritual-list">
                 {wontFit.map((t) => (
@@ -318,7 +324,31 @@ export function PlanRitual() {
               <Link2 size={14} />
               Copy a share link
             </button>
+            <button type="button" className="btn btn-quiet" onClick={() => setChoosing(!choosing)} aria-expanded={choosing}>
+              {unshared.size > 0 ? `Sharing ${todays.length - unshared.size} of ${todays.length}` : 'Choose what to share'}
+            </button>
           </div>
+          {choosing && (
+            <ul className="share-pick">
+              {byTime(todays).map((t) => (
+                <li key={t.id}>
+                  <label className="check-row">
+                    <input
+                      type="checkbox"
+                      checked={!unshared.has(t.id)}
+                      onChange={() => {
+                        const next = new Set(unshared);
+                        if (next.has(t.id)) next.delete(t.id);
+                        else next.add(t.id);
+                        setUnshared(next);
+                      }}
+                    />
+                    {t.title}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

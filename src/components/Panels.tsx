@@ -4,7 +4,7 @@ import { CHANNEL_COLORS, isPlannerData, snapshot, useStore } from '../store';
 import { useUI } from '../ui';
 import { addDays, shortDate, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
-import { actualTotal, honesty, MIN_SAMPLES, plannedTotal, type Honesty } from '../lib/stats';
+import { type Honesty, MIN_SAMPLES, honesty, plannedTotal, todos, trackedOn } from '../lib/stats';
 import { AddLine, Dialog } from './bits';
 
 const close = () => useUI.getState().openModal(null);
@@ -153,6 +153,10 @@ export function Settings() {
         </datalist>
         <AddLine placeholder="Add a channel" label="Add a channel" onAdd={(t) => channelByName(t)} />
 
+        <button type="button" className="btn btn-quiet help-link" onClick={() => useUI.getState().openModal('help')}>
+          How quick add and the shortcuts work
+        </button>
+
         <h4>Your data</h4>
         <p className="muted">Everything is stored in this browser and nowhere else. Download a backup now and then, or to move to another device.</p>
         <div className="row wrap">
@@ -200,7 +204,8 @@ export function Insights() {
     () =>
       Array.from({ length: 7 }, (_, i) => {
         const date = addDays(today, i - 6);
-        const list = tasks.filter((t) => t.date === date);
+        const all = tasks.filter((t) => t.date === date);
+        const list = todos(all);
         const log = days[date];
         // Tasks that were carried to a later day still count as planned for this one.
         return {
@@ -208,7 +213,7 @@ export function Insights() {
           done: list.filter((t) => t.done).length,
           total: list.length + (log?.carried ?? 0),
           planned: plannedTotal(list) + (log?.carriedMin ?? 0),
-          actual: actualTotal(list),
+          actual: trackedOn(all, log),
         };
       }),
     [tasks, days, today],

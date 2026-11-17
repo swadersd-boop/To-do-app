@@ -6,7 +6,8 @@ import { copyText } from '../actions';
 import { tasksOn } from '../lib/model';
 import { addDays, longDate } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { actualTotal, plannedTotal } from '../lib/stats';
+import { todaySec, trackedOn, workTotal } from '../lib/stats';
+import { fmtClock } from '../lib/time';
 import { shutdownText } from '../lib/summary';
 import { ChannelPill, CheckCircle, Dialog, DurationInput } from './bits';
 import { Stepper } from './PlanRitual';
@@ -26,12 +27,15 @@ export function ShutdownRitual() {
   const [reflection, setReflection] = useState(saved?.reflection ?? '');
 
   const todays = useMemo(() => tasksOn(tasks, today), [tasks, today]);
-  const done = todays.filter((t) => t.done);
-  const open = todays.filter((t) => !t.done);
+  // Meetings are not to-dos: they are not "not done", and they never move to tomorrow.
+  const done = todays.filter((t) => t.done && !t.fixed);
+  const open = todays.filter((t) => !t.done && !t.fixed);
+  const ahead = todays.filter((t) => !t.done && t.fixed && t.start !== null);
   const tomorrow = addDays(today, 1);
-  const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done).length;
-  const planned = plannedTotal(todays);
-  const actual = actualTotal(todays);
+  // Unfinished to-dos carry over on their own, so they are part of tomorrow's list too.
+  const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done).length + open.length;
+  const planned = workTotal(todays);
+  const actual = trackedOn(todays);
   const summary = shutdownText(today, todays, channels, reflection);
 
   const begin = () => {
@@ -97,8 +101,8 @@ export function ShutdownRitual() {
                       <span>took</span>
                       <DurationInput
                         label={`Time spent on ${t.title}`}
-                        minutes={t.actualSec / 60}
-                        onChange={(min) => updateTask(t.id, { actualSec: Math.round((min ?? 0) * 60) })}
+                        minutes={todaySec(t) / 60}
+                        onChange={(min) => updateTask(t.id, { actualSec: Math.round((min ?? 0) * 60) + (t.trackedBefore ?? 0) })}
                       />
                       {t.planned !== null && <span className="muted">of {fmtMin(t.planned)}</span>}
                     </label>
@@ -110,7 +114,7 @@ export function ShutdownRitual() {
           {open.length > 0 && (
             <>
               <h4>Not done ({open.length})</h4>
-              <p className="lede">Decide now, so tomorrow does not start with a pile.</p>
+              <p className="lede">These move to tomorrow on their own. Send anything that can wait to the backlog instead.</p>
               <ul className="ritual-list">
                 {open.map((t) => (
                   <li key={t.id} className="ritual-row">
@@ -132,6 +136,11 @@ export function ShutdownRitual() {
               </ul>
             </>
           )}
+          {ahead.length > 0 && (
+            <p className="muted">
+              Still to come today: {ahead.map((t) => `${t.title} at ${fmtClock(t.start!)}`).join(', ')}.
+            </p>
+          )}
         </div>
       )}
 
@@ -145,7 +154,7 @@ export function ShutdownRitual() {
             </div>
             <div>
               <strong>{fmtMin(planned)}</strong>
-              <span>planned</span>
+              <span>of work planned</span>
             </div>
             <div>
               <strong>{actual >= 1 ? fmtMin(actual) : 'none'}</strong>
@@ -153,7 +162,7 @@ export function ShutdownRitual() {
             </div>
             <div>
               <strong>{tomorrowCount}</strong>
-              <span>waiting tomorrow</span>
+              <span>on tomorrow's list</span>
             </div>
           </div>
           <label className="stack">

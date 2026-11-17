@@ -1,7 +1,7 @@
 import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
 import { fmtClock, fmtMin } from './time';
-import { actualTotal, plannedTotal } from './stats';
+import { plannedTotal, todaySec, trackedOn } from './stats';
 
 const tag = (t: Task, channels: Channel[]) => {
   const c = channels.find((x) => x.id === t.channelId);
@@ -24,25 +24,27 @@ export function planText(date: ISODate, tasks: Task[], channels: Channel[], inte
 
 /** The end-of-day recap as plain text. */
 export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], reflection: string): string {
-  const done = tasks.filter((t) => t.done);
+  const done = tasks.filter((t) => t.done && !t.fixed);
   const open = tasks.filter((t) => !t.done);
   const lines = [`Shutdown for ${longDate(date)}`, ''];
   if (done.length > 0) {
     lines.push(`Done (${done.length}):`);
     for (const t of done) {
-      const tracked = t.actualSec >= 60 ? `: ${fmtMin(t.actualSec / 60)}` : '';
+      const tracked = todaySec(t) >= 60 ? `: ${fmtMin(todaySec(t) / 60)}` : '';
       const planned = t.planned ? ` (planned ${fmtMin(t.planned)})` : '';
       lines.push(`- ${t.title}${tracked}${tracked ? planned : ''}${tag(t, channels)}`);
     }
   }
-  if (open.length > 0) {
+  const left = open.filter((t) => !t.fixed);
+  if (left.length > 0) {
     if (done.length > 0) lines.push('');
-    lines.push(`Not done (${open.length}):`);
-    for (const t of open) lines.push(`- ${t.title}${tag(t, channels)}`);
+    lines.push(`Not done (${left.length}):`);
+    for (const t of left) lines.push(`- ${t.title}${tag(t, channels)}`);
   }
   if (tasks.length === 0) lines.push('Nothing was planned today.');
-  const actual = actualTotal(tasks);
-  if (actual >= 1) lines.push('', `Tracked ${fmtMin(actual)} against ${fmtMin(plannedTotal(tasks))} planned.`);
+  const actual = trackedOn(tasks);
+  const work = tasks.filter((t) => !t.fixed);
+  if (actual >= 1) lines.push('', `Tracked ${fmtMin(actual)} against ${fmtMin(plannedTotal(work))} of work planned.`);
   if (reflection.trim()) lines.push('', `Reflection: ${reflection.trim()}`);
   return lines.join('\n');
 }

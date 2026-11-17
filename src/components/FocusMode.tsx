@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import { useUI } from '../ui';
 import { tasksOn, workQueue } from '../lib/model';
 import { fmtClock, fmtMin, fmtStopwatch } from '../lib/time';
-import { AddLine, ChannelPill, CheckCircle, useEscape, useNow, useTracked } from './bits';
+import { AddLine, ChannelPill, CheckCircle, TimerQuestion, useEscape, useNow, useTracked } from './bits';
 
 export function FocusMode() {
   const id = useUI((s) => s.focusTaskId);
@@ -21,7 +21,9 @@ export function FocusMode() {
     () => workQueue(tasksOn(tasks, task?.date ?? today), nowMin).filter((t) => t.id !== id),
     [tasks, task?.date, today, id, nowMin],
   );
-  const next = queue[0];
+  // The next thing to work on skips meetings that have not started; the next meeting is mentioned separately.
+  const next = queue.find((t) => !(t.fixed && t.start !== null && t.start > nowMin + 5));
+  const meeting = queue.find((t) => t.fixed && t.start !== null && t.start > nowMin + 5);
   const { seconds, running } = useTracked(task?.id ?? '', task?.actualSec ?? 0);
 
   const close = () => useUI.getState().openModal(null);
@@ -68,6 +70,7 @@ export function FocusMode() {
         <X size={20} />
       </button>
       <div className="focus-inner">
+        <TimerQuestion />
         <ChannelPill channelId={task.channelId} />
         <h2 className="focus-title">{task.title}</h2>
 
@@ -132,9 +135,13 @@ export function FocusMode() {
         </div>
 
         <p className="focus-next">
-          {next
-            ? `Up next: ${next.title}${next.start !== null ? ` at ${fmtClock(next.start)}` : ''}`
-            : 'This is the last task of the day.'}
+          {next ? `Up next: ${next.title}${next.start !== null ? ` at ${fmtClock(next.start)}` : ''}` : 'Nothing else to work on today.'}
+          {meeting && (
+            <>
+              <br />
+              Next meeting: {meeting.title} at {fmtClock(meeting.start!)}
+            </>
+          )}
         </p>
       </div>
     </div>

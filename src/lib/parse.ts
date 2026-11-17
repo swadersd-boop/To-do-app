@@ -51,7 +51,7 @@ function parseDay(word: string, before: string | undefined, today: ISODate): ISO
   const prev = before?.toLowerCase();
   if (prev && NOT_A_DATE_AFTER.has(prev)) return undefined;
   if (w === 'today') return today;
-  if (w === 'tomorrow' || w === 'tmr') return addDays(today, 1);
+  if (['tomorrow', 'tmr', 'tmrw', 'tmw', 'tomorow', 'tommorow'].includes(w)) return addDays(today, 1);
   if (w === 'backlog' || w === 'later' || w === 'someday') return null;
   // "fri" is shorthand nobody types by accident. A full "Friday" needs "on" in front.
   const idx = WEEKDAYS.findIndex((d) => (w.length === 3 && d.startsWith(w)) || (w === d && prev === 'on'));
@@ -72,8 +72,15 @@ function parseDay(word: string, before: string | undefined, today: ISODate): ISO
 export function parseQuickAdd(input: string, today: ISODate): ParsedTask {
   const out: ParsedTask = { title: '', planned: null, channel: null, date: undefined, start: null };
   const kept: string[] = [];
-  // "@ 5pm" is the same as "@5pm".
-  const tokens = input.trim().replace(/(^|\s)@\s+(?=\d|noon)/gi, '$1@').split(/\s+/).filter(Boolean);
+  const tokens = input
+    .trim()
+    // "@ 5pm" is the same as "@5pm", and "@3 pm" the same as "@3pm".
+    .replace(/(^|\s)@\s+(?=\d|noon)/gi, '$1@')
+    .replace(/(^|\s)(@\d{1,2}(?:[:.]\d{2})?)\s+(am|pm)\b/gi, '$1$2$3')
+    // "at 2pm" or "at 14:30" reads as a time. "at 2" alone could be anything, so it stays in the title.
+    .replace(/(^|\s)at\s+(\d{1,2}(?:(?:[:.]\d{2})(?:\s?(?:am|pm))?|\s?(?:am|pm))(?:-\d{1,2}(?:[:.]\d{2})?\s?(?:am|pm)?)?)(?=\s|$)/gi, (_, lead: string, time: string) => `${lead}@${time.replace(/\s+/g, '')}`)
+    .split(/\s+/)
+    .filter(Boolean);
   let rangeLength: number | null = null;
 
   for (let i = 0; i < tokens.length; i += 1) {

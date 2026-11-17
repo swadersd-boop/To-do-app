@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
+import { autoSchedule, remainingOf, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
 import { forecast, honesty } from '../src/lib/stats';
 import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
@@ -130,8 +130,8 @@ describe('autoSchedule', () => {
       task({ id: 'done', order: 3, planned: 30, done: true, start: 480 }),
       task({ id: 'c', order: 4 }),
     ];
-    // Work happens in list order and a task is never split, so short gaps before a long task stay free.
-    expect(autoSchedule(day, 550, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ a: 630, b: 780, c: 810 });
+    // Priority picks first, but a short task further down still uses the gap before the meeting.
+    expect(autoSchedule(day, 550, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ a: 630, b: 555, c: 780 });
   });
 
   it('leaves out what does not fit before the end of the day', () => {
@@ -160,6 +160,17 @@ describe('fixed commitments', () => {
     expect(autoSchedule(day, 690, 19 * 60)).toEqual({ slipped: 690, ahead: 750, loose: 780 });
   });
 
+  it('books only the time a half-done task still needs', () => {
+    const deck = task({ id: 'deck', order: 0, planned: 120, actualSec: 104 * 60, start: 540 });
+    expect(remainingOf(deck)).toBe(20);
+    expect(autoSchedule([deck], 690, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ deck: 690 });
+  });
+
+  it("stops at the day's capacity even when the clock has room", () => {
+    const day = [task({ id: 'a', order: 0, planned: 240 }), task({ id: 'b', order: 1, planned: 120 }), task({ id: 'c', order: 2, planned: 60 })];
+    expect(autoSchedule(day, 480, 19 * 60, [], 300)).toEqual({ a: 480, b: null, c: 720 });
+  });
+
   it('when running late, keeps the top priority and drops the bottom of the list', () => {
     const day = [
       task({ id: 'proposal', order: 0, planned: 120, start: 540 }),
@@ -168,9 +179,10 @@ describe('fixed commitments', () => {
       task({ id: 'one-on-one', order: 3, planned: 30, start: 840, fixed: true }),
     ];
     const plan = autoSchedule(day, 690, 19 * 60, [{ start: 720, end: 780 }]);
-    // Two hours do not fit between lunch and the 14:00 one-to-one, so it starts after it.
+    // Two hours do not fit between lunch and the 14:00 one-to-one, so it starts after it,
+    // and the shorter review takes the gap instead of leaving it empty.
     expect(plan.proposal).toBe(870);
-    expect(plan.review).toBe(990);
+    expect(plan.review).toBe(780);
     expect(plan.refactor).toBeNull();
   });
 
@@ -281,7 +293,7 @@ describe('summaries', () => {
     );
     expect(text).toContain('Done (1):\n- Brief: 50m (planned 1h 30m)');
     expect(text).toContain('Not done (1):\n- Emails');
-    expect(text).toContain('Tracked 50m against 2h planned.');
+    expect(text).toContain('Tracked 50m against 2h of work planned.');
     expect(text).toContain('Reflection: Good day');
   });
 });

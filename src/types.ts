@@ -44,6 +44,13 @@ export interface Task {
   fixed?: boolean;
   /** One of the example tasks shown on first run. */
   example?: boolean;
+  /**
+   * Length of the timebox when it differs from the estimate: replanning a
+   * half-done task books only the time it still needs.
+   */
+  blockMin?: number | null;
+  /** Seconds tracked on earlier days, before the task was carried over to this one. */
+  trackedBefore?: number;
 }
 
 export interface Channel {
@@ -68,6 +75,8 @@ export interface DayLog {
   /** Unfinished tasks that were carried from this day to a later one, and their planned minutes. */
   carried?: number;
   carriedMin?: number;
+  /** Seconds tracked this day on tasks that were then carried to a later day. */
+  carriedSec?: number;
 }
 
 export interface Settings {

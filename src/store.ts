@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, todayISO, weekStart } from './lib/dates';
-import { autoSchedule, moveTask, nextOccurrence, rollover, tasksOn, type Span } from './lib/model';
+import { autoSchedule, byTime, lengthOf, moveTask, nextOccurrence, remainingOf, rollover, tasksOn, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -96,6 +96,8 @@ interface Actions {
   deleteTask: (id: string) => Task | null;
   restoreTask: (task: Task) => void;
   toggleDone: (id: string) => void;
+  /** Marks fixed commitments that are over as done, and creates the next one of a repeating commitment. */
+  settleCommitments: (today: ISODate, nowMin: number) => void;
   moveTask: (id: string, date: ISODate | null, index: number) => void;
   /** Moves a task to the end of a day or the backlog. */
   sendTo: (id: string, date: ISODate | null) => void;
@@ -157,6 +159,40 @@ function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 't
   };
 }
 
+/**
+ * Marks a task done. A repeating task gets its next occurrence: the first due
+ * day after the one it was due on, and never earlier than today, so a missed
+ * week does not come back as five copies.
+ */
+function complete(tasks: Task[], task: Task, today: ISODate): Task[] {
+  let nextId: string | null = null;
+  let out = tasks;
+  if (task.repeat) {
+    const due = task.date ?? today;
+    const yesterday = addDays(today, -1);
+    const date = nextOccurrence(task.repeat, task.repeatFrom ?? due, due > yesterday ? due : yesterday);
+    // Only a fixed commitment keeps its hour. A time picked by "Fill my day" was for that day alone.
+    const input: NewTask = {
+      title: task.title,
+      date,
+      planned: task.planned,
+      channelId: task.channelId,
+      notes: task.notes,
+      start: task.fixed ? task.start : null,
+      fixed: task.fixed,
+    };
+    const next: Task = {
+      ...makeTask(input, nextOrder(out, date)),
+      subtasks: task.subtasks.map((x) => ({ ...x, id: uid(), done: false })),
+      repeat: task.repeat,
+      repeatFrom: date,
+    };
+    out = [...out, next];
+    nextId = next.id;
+  }
+  return out.map((t) => (t.id === task.id ? { ...t, done: true, doneAt: new Date().toISOString(), nextId } : t));
+}
+
 export const useStore = create<Store>()(
   persist(
     (set, get) => ({
@@ -177,7 +213,8 @@ export const useStore = create<Store>()(
           if (!current) return s;
           // A commitment without a time is no longer fixed.
           const merge = (t: Task): Task => {
-            const next = { ...t, ...patch };
+            // A new estimate replaces a shortened timebox.
+            const next = { ...t, ...(patch.planned !== undefined && patch.blockMin === undefined ? { blockMin: null } : {}), ...patch };
             return next.fixed && next.start === null ? { ...next, fixed: false } : next;
           };
           let tasks = s.tasks.map((t) => (t.id === id ? merge(t) : t));
@@ -223,33 +260,35 @@ export const useStore = create<Store>()(
             return { timer: settled.timer, tasks };
           }
 
-          let nextId: string | null = null;
-          if (task.repeat) {
-            const today = todayISO();
-            // A repeating task parked in the backlog still repeats, counted from today.
-            const due = task.date ?? today;
-            const date = nextOccurrence(task.repeat, task.repeatFrom ?? due, due > today ? due : today);
-            // Only a fixed commitment keeps its hour. A time picked by "Fill my day" was for that day alone.
-            const input: NewTask = {
-              title: task.title,
-              date,
-              planned: task.planned,
-              channelId: task.channelId,
-              notes: task.notes,
-              start: task.fixed ? task.start : null,
-              fixed: task.fixed,
-            };
-            const next: Task = {
-              ...makeTask(input, nextOrder(tasks, date)),
-              subtasks: task.subtasks.map((x) => ({ ...x, id: uid(), done: false })),
-              repeat: task.repeat,
-              repeatFrom: date,
-            };
-            tasks = [...tasks, next];
-            nextId = next.id;
+          const now = new Date();
+          const nowMin = now.getHours() * 60 + now.getMinutes();
+          tasks = complete(tasks, task, todayISO(now));
+          // Finishing early frees the slot that was planned for it later today,
+          // and a block finished partway through shrinks to the time it took.
+          if (!task.fixed && task.date === todayISO(now) && task.start !== null) {
+            const start = task.start;
+            if (start > nowMin) {
+              tasks = tasks.map((t) => (t.id === id ? { ...t, start: null, blockMin: null } : t));
+            } else if (start + lengthOf(task) > nowMin) {
+              const took = Math.max(15, Math.ceil((nowMin - start) / 5) * 5);
+              tasks = tasks.map((t) => (t.id === id ? { ...t, blockMin: took } : t));
+            }
           }
-          tasks = tasks.map((t) => (t.id === id ? { ...t, done: true, doneAt: new Date().toISOString(), nextId } : t));
           return { timer: settled.timer, tasks };
+        }),
+
+      settleCommitments: (today, nowMin) =>
+        set((s) => {
+          const over = s.tasks.filter(
+            (t) =>
+              (t.fixed && !t.done && t.date !== null && t.start !== null && (t.date < today || (t.date === today && t.start + lengthOf(t) <= nowMin))) ||
+              // A finished task that was set to repeat afterwards still gets its next occurrence.
+              (t.done && t.repeat && !t.nextId && t.date !== null),
+          );
+          if (over.length === 0) return s;
+          let tasks = s.tasks;
+          for (const t of over) tasks = complete(tasks, tasks.find((x) => x.id === t.id)!, today);
+          return { tasks };
         }),
 
       moveTask: (id, date, index) => set((s) => ({ tasks: moveTask(s.tasks, id, date, index) })),
@@ -266,7 +305,13 @@ export const useStore = create<Store>()(
             const after = tasks.find((t) => t.id === before.id);
             if (!before.date || !after || after.date === before.date) continue;
             const log = days[before.date] ?? {};
-            days[before.date] = { ...log, carried: (log.carried ?? 0) + 1, carriedMin: (log.carriedMin ?? 0) + (before.planned ?? 0) };
+            days[before.date] = {
+              ...log,
+              carried: (log.carried ?? 0) + 1,
+              carriedMin: (log.carriedMin ?? 0) + (before.planned ?? 0),
+              // The time worked that day stays with that day.
+              carriedSec: (log.carriedSec ?? 0) + before.actualSec - (before.trackedBefore ?? 0),
+            };
           }
           return { tasks, days };
         }),
@@ -274,8 +319,18 @@ export const useStore = create<Store>()(
       autoSchedule: (date, from) => {
         const s = get();
         const day = tasksOn(s.tasks, date);
-        const plan = autoSchedule(day, Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60, breaksOf(s.settings));
-        set({ tasks: s.tasks.map((t) => (plan[t.id] === undefined ? t : { ...t, start: plan[t.id] })) });
+        // Work already finished today counts against the day's capacity.
+        const doneToday = day.filter((t) => t.done && !t.fixed).reduce((sum, t) => sum + (t.planned ?? 0), 0);
+        const budget = Math.max(0, s.settings.capacityMin - doneToday);
+        const plan = autoSchedule(day, Math.max(from, s.settings.dayStart * 60), s.settings.dayEnd * 60, breaksOf(s.settings), budget);
+        const scheduled = s.tasks.map((t) => {
+          if (plan[t.id] === undefined) return t;
+          const length = remainingOf(t);
+          return { ...t, start: plan[t.id], blockMin: plan[t.id] !== null && length !== (t.planned ?? length) ? length : null };
+        });
+        // The list now reads in the order the day will go.
+        const order = new Map(byTime(tasksOn(scheduled, date)).map((t, i) => [t.id, i]));
+        set({ tasks: scheduled.map((t) => (order.has(t.id) ? { ...t, order: order.get(t.id)! } : t)) });
         return {
           placed: Object.values(plan).filter((v) => v !== null).length,
           left: day.filter((t) => plan[t.id] === null),

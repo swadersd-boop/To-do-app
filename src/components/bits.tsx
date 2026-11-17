@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { createPortal } from 'react-dom';
 import { Check, X } from 'lucide-react';
 import { useStore } from '../store';
+import type { Task, Timer } from '../types';
 import { fmtClock, fmtMin, parseDuration } from '../lib/time';
 import { parseQuickAdd, unreadTokens } from '../lib/parse';
 import { relativeDay } from '../lib/dates';
@@ -381,5 +382,37 @@ export function DurationInput({ minutes, onChange, label }: { minutes: number | 
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
       }}
     />
+  );
+}
+
+/** When to ask whether a timer is still in use: well past the estimate, then every hour after "Still working". */
+export function timerAskAt(timer: Timer, task: Task): number {
+  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
+  return timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
+}
+
+/** The "still working?" question for a timer that has run too long, or nothing. */
+export function TimerQuestion() {
+  const timer = useStore((s) => s.timer);
+  const task = useStore((s) => s.tasks.find((t) => t.id === s.timer?.taskId));
+  const now = useNow(20_000, Boolean(timer));
+  if (!timer || !task) return null;
+  const askAt = timerAskAt(timer, task);
+  if (now < askAt) return null;
+  const { confirmTimer, stopTimer } = useStore.getState();
+  return (
+    <div className="timer-question" role="alert">
+      <span>
+        The timer on <strong>{task.title}</strong> has run for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
+      </span>
+      <span className="row wrap">
+        <button type="button" className="btn" onClick={confirmTimer}>
+          Still working
+        </button>
+        <button type="button" className="btn" onClick={() => stopTimer(askAt)} title="Stops the timer and drops the time since this question came up">
+          No, stop at {fmtMin((askAt - timer.startedAt) / 60_000)}
+        </button>
+      </span>
+    </div>
   );
 }

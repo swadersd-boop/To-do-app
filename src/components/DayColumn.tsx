@@ -8,7 +8,7 @@ import { addFromText } from '../actions';
 import { occursOn, tasksOn } from '../lib/model';
 import { isWeekend, relativeDay, shortDate, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { actualTotal, fixedTotal, workTotal } from '../lib/stats';
+import { fixedTotal, trackedOn, workTotal } from '../lib/stats';
 import { AddLine, LoadBar } from './bits';
 import { GhostCard, TaskCard } from './TaskCard';
 
@@ -34,7 +34,8 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const upcoming = [...open, ...ghosts];
   const planned = workTotal(upcoming);
   const fixed = fixedTotal(upcoming);
-  const doneCount = list.length - open.length;
+  const doneCount = list.filter((t) => t.done && !t.fixed).length;
+  const tracked = trackedOn(list, log);
   const over = planned - capacity;
   const empty = list.length === 0 && ghosts.length === 0;
 
@@ -63,7 +64,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
           {empty
             ? 'Nothing planned'
             : isPast
-              ? `${doneCount} done${actualTotal(list) >= 1 ? ` · ${fmtMin(actualTotal(list))} tracked` : ''}`
+              ? `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} tracked` : ''}`
               : over > 0
                 ? `${fmtMin(planned)} of work, ${fmtMin(over)} over`
                 : `${fmtMin(planned)} of ${fmtMin(capacity)}`}

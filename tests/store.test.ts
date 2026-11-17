@@ -110,6 +110,68 @@ describe('store', () => {
     expect(store().timer).toBeNull();
   });
 
+  it('completes a meeting when it is over and creates the next one, without a tick', () => {
+    const monday = addDays(today, -1);
+    const id = store().addTask({ title: 'Standup', date: monday, planned: 15, start: 570, fixed: true });
+    store().updateTask(id, { repeat: 'daily', repeatFrom: monday });
+    store().settleCommitments(today, 8 * 60);
+    expect(find(id).done).toBe(true);
+    const next = store().tasks.filter((t) => t.title === 'Standup' && !t.done);
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ date: today, start: 570, fixed: true });
+    // Today's has not happened yet at 08:00, and is done once it is over.
+    expect(next[0].done).toBe(false);
+    store().settleCommitments(today, 9 * 60 + 50);
+    expect(find(next[0].id).done).toBe(true);
+    expect(store().tasks.filter((t) => t.title === 'Standup' && !t.done)[0].date).toBe(addDays(today, 1));
+  });
+
+  it('creates the next occurrence when a finished task is set to repeat afterwards', () => {
+    const id = store().addTask({ title: 'Standup', date: today, planned: 15, start: 570, fixed: true });
+    store().settleCommitments(today, 12 * 60);
+    expect(find(id).done).toBe(true);
+    store().updateTask(id, { repeat: 'weekdays', repeatFrom: today });
+    store().settleCommitments(today, 12 * 60);
+    expect(store().tasks.filter((t) => t.title === 'Standup' && !t.done)).toHaveLength(1);
+    store().settleCommitments(today, 12 * 60);
+    expect(store().tasks.filter((t) => t.title === 'Standup')).toHaveLength(2);
+  });
+
+  it('does not bring back a whole missed week of a repeating meeting', () => {
+    const lastWeek = addDays(today, -6);
+    const id = store().addTask({ title: 'Standup', date: lastWeek, planned: 15, start: 570, fixed: true });
+    store().updateTask(id, { repeat: 'daily', repeatFrom: lastWeek });
+    store().settleCommitments(today, 8 * 60);
+    expect(store().tasks.filter((t) => t.title === 'Standup')).toHaveLength(2);
+    expect(store().tasks.find((t) => t.title === 'Standup' && !t.done)!.date).toBe(today);
+  });
+
+  it('keeps the time worked on a day with that day when the task rolls over', () => {
+    const id = store().addTask({ title: 'Proposal', date: yesterday, planned: 120 });
+    store().updateTask(id, { actualSec: 75 * 60 });
+    store().rollover(today);
+    expect(find(id)).toMatchObject({ date: today, actualSec: 75 * 60, trackedBefore: 75 * 60 });
+    expect(store().days[yesterday].carriedSec).toBe(75 * 60);
+  });
+
+  it('frees the later slot of a task finished early', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 16, 11, 0));
+    const day = todayISO();
+    const id = store().addTask({ title: 'Deck', date: day, planned: 60, start: 14 * 60 });
+    store().toggleDone(id);
+    expect(find(id)).toMatchObject({ done: true, start: null });
+  });
+
+  it('shrinks a block finished partway through to the time it took', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 16, 9, 42));
+    const day = todayISO();
+    const id = store().addTask({ title: 'Brief', date: day, planned: 90, start: 9 * 60 + 15 });
+    store().toggleDone(id);
+    expect(find(id)).toMatchObject({ start: 555, blockMin: 30 });
+  });
+
   it('removes only the example tasks', () => {
     store().importData({ ...store(), tasks: [] });
     const mine = store().addTask({ title: 'Mine', date: today });
