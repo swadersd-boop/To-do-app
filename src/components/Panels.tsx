@@ -188,10 +188,17 @@ export function Settings() {
   );
 }
 
+/** "30% longer", "20% less", or "about right". */
 function describe(h: Honesty): string {
   const pct = Math.round(Math.abs(h.ratio - 1) * 100);
-  if (pct < 8) return 'right on your estimates';
-  return h.ratio > 1 ? `${pct}% longer than you estimate` : `${pct}% quicker than you estimate`;
+  if (pct < 8) return 'about right';
+  return h.ratio > 1 ? `${pct}% longer` : `${pct}% less`;
+}
+
+function lead(h: Honesty): string {
+  const pct = Math.round(Math.abs(h.ratio - 1) * 100);
+  if (pct < 8) return 'Your estimates are about right.';
+  return h.ratio > 1 ? `Tasks take about ${pct}% longer than you estimate.` : `Tasks take about ${pct}% less time than you estimate.`;
 }
 
 export function Insights() {
@@ -218,13 +225,19 @@ export function Insights() {
       }),
     [tasks, days, today],
   );
+  // Leave out the days before Kalm was first used.
+  const firstDay = useMemo(
+    () => [...tasks.map((t) => t.createdAt.slice(0, 10)), ...Object.keys(days)].sort()[0] ?? today,
+    [tasks, days, today],
+  );
+  const shownWeek = week.filter((d) => d.date >= firstDay);
 
   return (
     <Dialog title="How your estimates hold up" onClose={close}>
       {h.overall ? (
         <>
           <p className="insight-lead">
-            Your tasks take <strong>{describe(h.overall)}</strong>.
+            <strong>{lead(h.overall)}</strong>
           </p>
           <p className="muted">
             Based on {h.overall.samples} finished tasks that had both an estimate and tracked time. The planning ritual uses this to tell you what a day will
@@ -235,7 +248,7 @@ export function Insights() {
               <thead>
                 <tr>
                   <th>Channel</th>
-                  <th>Tends to run</th>
+                  <th>Compared with estimates</th>
                   <th className="num">Tasks</th>
                 </tr>
               </thead>
@@ -275,7 +288,7 @@ export function Insights() {
           </tr>
         </thead>
         <tbody>
-          {week.map((d) => (
+          {shownWeek.map((d) => (
             <tr key={d.date} className={d.date === today ? 'is-today' : ''}>
               <td>
                 {weekdayName(d.date, 'short')} {shortDate(d.date)}

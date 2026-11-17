@@ -249,7 +249,7 @@ describe('estimate honesty', () => {
     task({ done: true, planned, actualSec: actualMin * 60, channelId });
 
   it('stays silent without enough history', () => {
-    expect(honesty([finished(30, 45), finished(30, 45)]).overall).toBeNull();
+    expect(honesty([finished(30, 45), finished(30, 45), finished(30, 45), finished(30, 45)]).overall).toBeNull();
     expect(forecast([task({ planned: 60 })], [])).toBeNull();
   });
 
@@ -258,18 +258,26 @@ describe('estimate honesty', () => {
     expect(honesty(list).overall).toBeNull();
   });
 
+  // Five tasks in "deep" that each ran 50% over, and one admin task that took half its estimate.
+  const history = () => [
+    finished(60, 90, 'deep'),
+    finished(30, 45, 'deep'),
+    finished(30, 45, 'deep'),
+    finished(20, 30, 'deep'),
+    finished(40, 60, 'deep'),
+    finished(30, 15, 'admin'),
+  ];
+
   it('measures the overall and per-channel ratio', () => {
-    const list = [finished(60, 90, 'deep'), finished(30, 45, 'deep'), finished(30, 45, 'deep'), finished(30, 15, 'admin')];
-    const h = honesty(list);
-    expect(h.overall).toEqual({ ratio: 195 / 150, samples: 4 });
+    const h = honesty(history());
+    expect(h.overall).toEqual({ ratio: 285 / 210, samples: 6 });
     expect(h.byChannel.deep.ratio).toBeCloseTo(1.5);
     expect(h.byChannel.admin).toBeUndefined();
   });
 
   it('forecasts with the channel ratio first, the overall one second', () => {
-    const history = [finished(60, 90, 'deep'), finished(30, 45, 'deep'), finished(30, 45, 'deep'), finished(30, 15, 'admin')];
     const plan = [task({ planned: 60, channelId: 'deep' }), task({ planned: 100, channelId: 'admin' }), task({})];
-    expect(forecast(plan, history)).toBeCloseTo(60 * 1.5 + 100 * 1.3);
+    expect(forecast(plan, history())).toBeCloseTo(60 * 1.5 + 100 * (285 / 210));
   });
 });
 

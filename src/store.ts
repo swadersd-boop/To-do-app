@@ -60,6 +60,8 @@ function makeTask(input: NewTask, order: number): Task {
   };
 }
 
+const STARTER_CHANNELS = ['work', 'deep', 'admin', 'personal'];
+
 /** A few example tasks so the first screen shows how things work. */
 export function seed(today: ISODate): PlannerData {
   const channels: Channel[] = [
@@ -71,9 +73,9 @@ export function seed(today: ISODate): PlannerData {
   const tomorrow = addDays(today, 1);
   const starter: NewTask[] = [
     { title: 'Press "Plan today" and walk through the ritual', date: today, planned: 10, channelId: 'admin' },
-    { title: 'Drag this card onto the timeline to give it a time', date: today, planned: 45, channelId: 'deep' },
-    { title: 'Hover a card and press play to focus on it', date: today, planned: 25, channelId: 'work' },
-    { title: 'Drag me to another day', date: today, planned: 15, channelId: 'personal' },
+    { title: 'Give this card a time: drag it onto the timeline, or open it and set a start', date: today, planned: 45, channelId: 'deep' },
+    { title: 'Press play on a card to focus on it', date: today, planned: 25, channelId: 'work' },
+    { title: 'Move me to another day: drag me, or open me and pick a day', date: today, planned: 15, channelId: 'personal' },
     { title: 'Type "Call the dentist 15m #personal" in the box above', date: tomorrow, planned: 5, channelId: 'admin' },
     { title: 'Things without a day live here until you pull them in', date: null, planned: 30, channelId: null },
   ];
@@ -342,7 +344,13 @@ export const useStore = create<Store>()(
           tasks: s.tasks.map((t) => (t.date === date && !t.done && !t.fixed && t.start !== null ? { ...t, start: null } : t)),
         })),
 
-      removeExamples: () => set((s) => ({ tasks: s.tasks.filter((t) => !t.example) })),
+      removeExamples: () =>
+        set((s) => {
+          const tasks = s.tasks.filter((t) => !t.example);
+          // The starter channels go too, unless something of yours uses them.
+          const used = new Set(tasks.map((t) => t.channelId));
+          return { tasks, channels: s.channels.filter((c) => !STARTER_CHANNELS.includes(c.id) || used.has(c.id)) };
+        }),
 
       addSubtask: (taskId, title) =>
         set((s) => ({

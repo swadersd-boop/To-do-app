@@ -111,7 +111,8 @@ export function PlanRitual() {
       name: settings.name,
       date: today,
       intention: intention.trim(),
-      tasks: byTime(todays.filter((t) => !unshared.has(t.id))).map((t) => {
+      // Share the plan as it reads on screen, including the times "Start my day" is about to give.
+      tasks: byTime([...todays.filter((t) => t.done), ...ordered].filter((t) => !unshared.has(t.id))).map((t) => {
         const c = channels.find((x) => x.id === t.channelId);
         return { title: t.title, planned: t.planned, done: t.done, channel: c?.name ?? null, color: c?.color ?? null, start: t.start };
       }),
@@ -296,8 +297,15 @@ export function PlanRitual() {
           </label>
           {wontFit.length > 0 && (
             <div className="wont-fit">
-              <p>
+              <p className="row wrap wont-fit-head">
+                <span>
                 {wontFit.length === 1 ? 'This does' : `These ${wontFit.length} do`} not fit in {late ? 'what is left of today' : `your ${fmtMin(settings.capacityMin)} of work`}:
+              </span>
+                {wontFit.length > 1 && (
+                  <button type="button" className="btn" onClick={() => wontFit.forEach((t) => sendTo(t.id, tomorrow))}>
+                    Move all to tomorrow
+                  </button>
+                )}
               </p>
               <ul className="ritual-list">
                 {wontFit.map((t) => (

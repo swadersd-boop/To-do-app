@@ -5,7 +5,7 @@ import { useStore } from '../store';
 import type { Task, Timer } from '../types';
 import { fmtClock, fmtMin, parseDuration } from '../lib/time';
 import { parseQuickAdd, unreadTokens } from '../lib/parse';
-import { relativeDay } from '../lib/dates';
+import { relativeDay, todayISO } from '../lib/dates';
 import { useUI } from '../ui';
 
 /** Re-renders on an interval while `active`, returning the current time. */
@@ -385,32 +385,80 @@ export function DurationInput({ minutes, onChange, label }: { minutes: number | 
   );
 }
 
-/** When to ask whether a timer is still in use: well past the estimate, then every hour after "Still working". */
-export function timerAskAt(timer: Timer, task: Task): number {
-  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
-  return timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
+export interface TimerAsk {
+  /** When to ask, in epoch milliseconds. */
+  at: number;
+  /** Where "stop" stops the clock, in epoch milliseconds. */
+  stopAt: number;
+  /** A meeting that started while the timer ran, if that is the reason for asking. */
+  meeting: Task | null;
 }
 
-/** The "still working?" question for a timer that has run too long, or nothing. */
+/**
+ * When to ask whether a running timer is still in use: a few minutes into a
+ * meeting that started while it ran, or well past the task's estimate. After
+ * "Still working" it asks again an hour later, or at the next meeting.
+ */
+export function timerAsk(timer: Timer, task: Task, tasks: Task[]): TimerAsk {
+  const since = Math.max(timer.startedAt, timer.checkedAt ?? 0);
+  const startOfDay = new Date(timer.startedAt);
+  startOfDay.setHours(0, 0, 0, 0);
+  const day = todayISO(new Date(timer.startedAt));
+  const meeting =
+    tasks
+      .filter((t) => t.fixed && t.id !== task.id && t.date === day && t.start !== null && startOfDay.getTime() + t.start * 60_000 > since)
+      .sort((a, b) => a.start! - b.start!)[0] ?? null;
+  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
+  const long = timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
+  if (meeting) {
+    const begins = startOfDay.getTime() + meeting.start! * 60_000;
+    if (begins + 5 * 60_000 < long) return { at: begins + 5 * 60_000, stopAt: begins, meeting };
+  }
+  return { at: long, stopAt: long, meeting: null };
+}
+
+/** The "still working?" question for a timer that has run too long or into a meeting, or nothing. */
 export function TimerQuestion() {
   const timer = useStore((s) => s.timer);
-  const task = useStore((s) => s.tasks.find((t) => t.id === s.timer?.taskId));
+  const tasks = useStore((s) => s.tasks);
+  const task = tasks.find((t) => t.id === timer?.taskId);
   const now = useNow(20_000, Boolean(timer));
   if (!timer || !task) return null;
-  const askAt = timerAskAt(timer, task);
-  if (now < askAt) return null;
+  const ask = timerAsk(timer, task, tasks);
+  if (now < ask.at) return null;
   const { confirmTimer, stopTimer } = useStore.getState();
+  const stopClock = new Date(ask.stopAt);
+  const stopLabel = fmtClock(stopClock.getHours() * 60 + stopClock.getMinutes());
   return (
     <div className="timer-question" role="alert">
       <span>
-        The timer on <strong>{task.title}</strong> has run for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
+        {ask.meeting ? (
+          <>
+            The timer on <strong>{task.title}</strong> kept running when <strong>{ask.meeting.title}</strong> started at {stopLabel}. Were you in it?
+          </>
+        ) : (
+          <>
+            The timer on <strong>{task.title}</strong> has run for {fmtMin((now - timer.startedAt) / 60_000)}. Still working on it?
+          </>
+        )}
       </span>
       <span className="row wrap">
-        <button type="button" className="btn" onClick={confirmTimer}>
-          Still working
+        <button type="button" className="btn" onClick={() => stopTimer(ask.stopAt)}>
+          {ask.meeting ? `Yes, stop at ${stopLabel}` : `Stop at ${stopLabel}`}
         </button>
-        <button type="button" className="btn" onClick={() => stopTimer(askAt)} title="Stops the timer and drops the time since this question came up">
-          No, stop at {fmtMin((askAt - timer.startedAt) / 60_000)}
+        <button type="button" className="btn" onClick={confirmTimer}>
+          {ask.meeting ? 'No, keep going' : 'Still working'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-quiet"
+          onClick={() => {
+            stopTimer(ask.stopAt);
+            useUI.getState().openTask(task.id);
+            useUI.getState().openModal(null);
+          }}
+        >
+          Stop and fix the time
         </button>
       </span>
     </div>

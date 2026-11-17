@@ -8,7 +8,7 @@ export interface Honesty {
 }
 
 /** A ratio from fewer tasks than this is noise, so it is not used. */
-export const MIN_SAMPLES = 3;
+export const MIN_SAMPLES = 5;
 
 function measurable(t: Task): boolean {
   return t.done && (t.planned ?? 0) > 0 && t.actualSec >= 60;

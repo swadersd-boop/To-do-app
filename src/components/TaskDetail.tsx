@@ -37,8 +37,14 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
   );
 
   useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
     panel.current?.focus();
-  }, []);
+    // Hand focus back to where it was, or to the task's card, so keyboard users keep their place.
+    return () => {
+      const target = previous && previous !== document.body && previous.isConnected ? previous : document.querySelector<HTMLElement>(`[data-task-id="${task.id}"]`);
+      target?.focus({ preventScroll: true });
+    };
+  }, [task.id]);
 
   useEscape(onClose);
 

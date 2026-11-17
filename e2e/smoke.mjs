@@ -83,9 +83,9 @@ await cardIn(tomorrow, 'Book flights').waitFor();
 await page.keyboard.press('Escape');
 
 // 3. Drag a card to another day.
-await drag(cardIn(today, 'Drag me to another day'), tomorrow.locator('.col-list'), { x: 0, y: 60 });
-await cardIn(tomorrow, 'Drag me to another day').waitFor();
-assert.equal(await cardIn(today, 'Drag me to another day').count(), 0, 'card left today');
+await drag(cardIn(today, 'Move me to another day'), tomorrow.locator('.col-list'), { x: 0, y: 60 });
+await cardIn(tomorrow, 'Move me to another day').waitFor();
+assert.equal(await cardIn(today, 'Move me to another day').count(), 0, 'card left today');
 
 // 4. Reorder inside a day.
 await drag(brief, cardIn(today, 'Press "Plan today"'), { x: 0, y: 4 });
@@ -94,8 +94,8 @@ assert.match(await today.locator('.card-wrap').first().innerText(), /Write the l
 // 5. Drag a card onto the timeline to timebox it.
 const grid = page.locator('[data-timeline-grid]');
 await page.locator('.timeline-scroll').evaluate((el) => (el.scrollTop = 0));
-await drag(cardIn(today, 'Drag this card onto the timeline'), grid, { x: 20, y: 120 });
-const block = page.locator('.block', { hasText: 'Drag this card onto the timeline' });
+await drag(cardIn(today, 'Give this card a time'), grid, { x: 20, y: 120 });
+const block = page.locator('.block', { hasText: 'Give this card a time' });
 await block.waitFor();
 assert.match(await block.getAttribute('aria-label'), /\d\d:\d\d to \d\d:\d\d/, 'block has a time range');
 await page.locator('.block', { hasText: 'Reply to supplier emails' }).waitFor();
@@ -234,7 +234,7 @@ assert.equal(await page.locator('.block', { hasText: 'Review PR #482' }).count()
 await pr.focus();
 await page.keyboard.press('x');
 assert.ok(await pr.locator('.card.is-done').count(), 'X marks the focused card done');
-const hover = cardIn(today, 'Hover a card and press play');
+const hover = cardIn(today, 'Press play on a card');
 await hover.getByRole('checkbox').focus();
 await page.keyboard.press('Space');
 assert.ok(await hover.locator('.card.is-done').count(), 'Space on the checkbox completes the task');
@@ -252,7 +252,7 @@ await hover.getByRole('button', { name: 'Start focus' }).click();
 await page.locator('.focus-clock').waitFor();
 await page.getByRole('button', { name: 'Leave focus mode' }).click();
 // A running timer stays visible after leaving focus mode, and can be stopped from anywhere.
-await page.locator('.running', { hasText: 'Hover a card and press play' }).waitFor();
+await page.locator('.running', { hasText: 'Press play on a card' }).waitFor();
 await page.getByRole('button', { name: 'Open', exact: true }).click();
 await page.locator('.focus-clock').waitFor();
 await page.clock.fastForward('03:00:00');
@@ -260,12 +260,12 @@ await page.getByRole('button', { name: 'Leave focus mode' }).click();
 const nag = page.locator('.running.is-asking');
 await nag.waitFor();
 await shot(page, '11b-timer-nag');
-await nag.getByRole('button', { name: /No, stop at/ }).click();
+await nag.getByRole('button', { name: /^Stop at/ }).click();
 assert.match(await hover.innerText(), /55m \//, 'only the time up to the question was counted');
 
 // 12g. The example tasks go away in one click.
 await page.getByRole('button', { name: 'Remove the examples' }).click();
-assert.equal(await cardIn(today, 'Hover a card').count(), 0, 'examples removed');
+assert.equal(await cardIn(today, 'Press play on a card').count(), 0, 'examples removed');
 await cardIn(today, 'Write the launch brief').waitFor();
 
 // 13. Other panels open without errors.

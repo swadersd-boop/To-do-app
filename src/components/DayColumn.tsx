@@ -71,6 +71,9 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
           {!isPast && fixed > 0 && ` · ${fmtMin(fixed)} fixed`}
           {!isPast && doneCount > 0 && ` · ${doneCount} done`}
           {isPast && (log?.carried ?? 0) > 0 && ` · ${log!.carried} carried over`}
+          {isPast && (log?.carriedSec ?? 0) >= 60 && (
+            <span className="col-load-note"> (tracked includes {fmtMin(log!.carriedSec! / 60)} on tasks carried over)</span>
+          )}
         </span>
       </div>
 

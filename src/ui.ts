@@ -30,6 +30,9 @@ interface UI {
   toast: Toast | null;
   /** Bumped to ask the board to scroll back to its first column. */
   boardReset: number;
+  /** While a card is dragged over the timeline: the time it would get. */
+  dropAt: number | null;
+  setDropAt: (min: number | null) => void;
 
   setToday: (d: ISODate) => void;
   selectDay: (d: ISODate) => void;
@@ -60,6 +63,8 @@ export const useUI = create<UI>()(
       timelineOpen: atLeast(900),
       toast: null,
       boardReset: 0,
+      dropAt: null,
+      setDropAt: (min) => set((s) => (s.dropAt === min ? s : { dropAt: min })),
 
       setToday: (d) =>
         set((s) => ({

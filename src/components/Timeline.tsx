@@ -4,7 +4,7 @@ import { Pin, Wand2, X } from 'lucide-react';
 import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
-import { DEFAULT_BLOCK, layoutBlocks, tasksOn, timelineRange } from '../lib/model';
+import { layoutBlocks, lengthOf, tasksOn, timelineRange } from '../lib/model';
 import { relativeDay, shortDate } from '../lib/dates';
 import { fmtClock, snap } from '../lib/time';
 import { useNow } from './bits';
@@ -39,7 +39,7 @@ function Block({
   const armed = useRef(false);
 
   const start = gesture?.start ?? task.start!;
-  const length = gesture?.length ?? task.planned ?? DEFAULT_BLOCK;
+  const length = gesture?.length ?? lengthOf(task);
 
   // React's touch handlers are passive, so blocking the scroll during a drag needs a real listener.
   useEffect(() => {
@@ -69,7 +69,7 @@ function Block({
       } catch {
         // The pointer may already be gone.
       }
-      setGesture({ id: task.id, mode, originY: clientY, start: task.start!, length: task.planned ?? DEFAULT_BLOCK, moved: false });
+      setGesture({ id: task.id, mode, originY: clientY, start: task.start!, length: lengthOf(task), moved: false });
     };
     if (e.pointerType !== 'touch') return arm(e.clientY);
     const { clientX, clientY } = e;
@@ -99,7 +99,7 @@ function Block({
       const next = Math.min(dayEndMin - STEP, Math.max(dayStartMin, snap(base + dy, STEP)));
       setGesture({ ...gesture, start: next, moved: true });
     } else {
-      const base = task.planned ?? DEFAULT_BLOCK;
+      const base = lengthOf(task);
       setGesture({ ...gesture, length: Math.max(STEP, snap(base + dy, STEP)), moved: true });
     }
   };
@@ -150,7 +150,7 @@ function Block({
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault();
           const delta = e.key === 'ArrowUp' ? -STEP : STEP;
-          if (e.shiftKey) updateTask(task.id, { planned: Math.max(STEP, (task.planned ?? DEFAULT_BLOCK) + delta) });
+          if (e.shiftKey) updateTask(task.id, { planned: Math.max(STEP, lengthOf(task) + delta) });
           else updateTask(task.id, { start: Math.min(dayEndMin - STEP, Math.max(dayStartMin, task.start! + delta)) });
         }
         if (e.key === 'Backspace' || e.key === 'Delete') updateTask(task.id, { start: null });
@@ -184,6 +184,7 @@ export function Timeline() {
   const day = useUI((s) => s.selectedDay);
   const today = useUI((s) => s.today);
   const notify = useUI((s) => s.notify);
+  const dropAt = useUI((s) => s.dropAt);
   const tasks = useStore((s) => s.tasks);
   const autoSchedule = useStore((s) => s.autoSchedule);
   const clearSchedule = useStore((s) => s.clearSchedule);
@@ -200,7 +201,7 @@ export function Timeline() {
   const dayEndMin = dayEnd * 60;
   const boxed = list.filter((t) => t.start !== null);
   const layout = useMemo(
-    () => layoutBlocks(boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, t.planned ?? DEFAULT_BLOCK) }))),
+    () => layoutBlocks(boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) }))),
     [boxed],
   );
   const hours = Array.from({ length: dayEnd - dayStart }, (_, i) => dayStart + i);
@@ -271,6 +272,7 @@ export function Timeline() {
           className={`grid ${isOver ? 'is-over' : ''}`}
           data-timeline-grid
           data-day-start={dayStartMin}
+          data-day-end={dayEndMin}
           style={{ height: (dayEndMin - dayStartMin) * PX_PER_MIN }}
         >
           {hours.map((h) => (
@@ -301,6 +303,11 @@ export function Timeline() {
               </p>
             )}
           </div>
+          {dropAt !== null && (
+            <div className="drop-at" style={{ top: (dropAt - dayStartMin) * PX_PER_MIN }} aria-hidden="true">
+              <span>{fmtClock(dropAt)}</span>
+            </div>
+          )}
           {showNow && (
             <div className="now" style={{ top: (nowMin - dayStartMin) * PX_PER_MIN }} aria-hidden="true">
               <span>{fmtClock(nowMin)}</span>

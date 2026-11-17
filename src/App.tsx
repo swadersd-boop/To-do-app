@@ -15,6 +15,7 @@ import {
   type DragOverEvent,
   type DragStartEvent,
   type Announcements,
+  type DragMoveEvent,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import {
@@ -38,7 +39,7 @@ import { addDays, fromISO, relativeDay, todayISO } from './lib/dates';
 import { focusTarget, tasksOn } from './lib/model';
 import { isShareHash } from './lib/share';
 import { fmtStopwatch, snap } from './lib/time';
-import { TimerQuestion, timerAskAt, useNow, useTracked } from './components/bits';
+import { TimerQuestion, timerAsk, useNow, useTracked } from './components/bits';
 import { Board } from './components/Board';
 import { Sidebar } from './components/Sidebar';
 import { PX_PER_MIN, Timeline } from './components/Timeline';
@@ -98,6 +99,24 @@ function useDayRollover() {
   useEffect(() => {
     if (auto) useStore.getState().rollover(today);
   }, [today, auto]);
+}
+
+/** Where the pointer is during a drag, or undefined for a keyboard drag. */
+function pointerOf(e: DragMoveEvent | DragEndEvent): { x: number; y: number } | undefined {
+  const ev = e.activatorEvent as (MouseEvent & TouchEvent) | null;
+  const point = ev && 'touches' in ev && ev.touches.length > 0 ? ev.touches[0] : ev && 'clientY' in ev ? ev : null;
+  if (!point) return undefined;
+  return { x: point.clientX + e.delta.x, y: point.clientY + e.delta.y };
+}
+
+/** The time on the timeline at a screen height, snapped to 15 minutes. */
+function minuteAt(y: number): number | null {
+  const grid = document.querySelector<HTMLElement>('[data-timeline-grid]');
+  if (!grid) return null;
+  const from = Number(grid.dataset.dayStart);
+  const to = Number(grid.dataset.dayEnd);
+  const raw = from + (y - grid.getBoundingClientRect().top) / PX_PER_MIN;
+  return Math.min(to - 15, Math.max(from, snap(raw, 15)));
 }
 
 const titleOf = (id: unknown) => useStore.getState().tasks.find((t) => t.id === id)?.title ?? 'Task';
@@ -184,7 +203,7 @@ function RunningBar() {
   }, [seconds, task, timer]);
 
   if (!timer || !task || modal === 'focus') return null;
-  if (now >= timerAskAt(timer, task)) {
+  if (now >= timerAsk(timer, task, useStore.getState().tasks).at) {
     return (
       <div className="running is-asking">
         <span className="running-dot" aria-hidden="true" />
@@ -297,6 +316,8 @@ function Planner() {
   const [active, setActive] = useState<Task | null>(null);
   const before = useRef<Task[] | null>(null);
   const overTimeline = useRef(false);
+  /** The pointer is near the board's right edge with the timeline open, so it is heading there. */
+  const towardTimeline = useRef(false);
   const boardScroll = useRef(0);
   const hasExamples = useStore((s) => s.tasks.some((t) => t.example));
   const todayAdd = useRef<HTMLInputElement>(null);
@@ -354,8 +375,11 @@ function Planner() {
         case '?':
           return run(() => state.openModal('help'));
         case 'ArrowLeft':
+          // On a card or block the arrows belong to it, so the board stays where it is.
+          if (target.closest('.card-wrap, .block')) return;
           return run(() => state.setBoardStart(addDays(state.boardStart, -1)));
         case 'ArrowRight':
+          if (target.closest('.card-wrap, .block')) return;
           return run(() => state.setBoardStart(addDays(state.boardStart, 1)));
       }
     };
@@ -398,25 +422,33 @@ function Planner() {
     store.moveTask(task.id, dest, index);
   };
 
+  const onDragMove = (e: DragMoveEvent) => {
+    const point = pointerOf(e);
+    const board = document.querySelector('.board')?.getBoundingClientRect();
+    towardTimeline.current = Boolean(point && board && useUI.getState().timelineOpen && point.x > board.right - 140);
+    const over = e.over?.data.current?.type === 'timeline';
+    useUI.getState().setDropAt(over ? minuteAt(point?.y ?? e.active.rect.current.translated?.top ?? 0) : null);
+  };
+
   const onDragEnd = (e: DragEndEvent) => {
     const { active: dragged, over } = e;
     const original = before.current?.find((t) => t.id === dragged.id);
     setActive(null);
+    useUI.getState().setDropAt(null);
     const kind = over?.data.current?.type as string | undefined;
     if (!over || !original) return restore();
     const store = useStore.getState();
     const id = String(dragged.id);
 
     if (kind === 'timeline') {
-      const grid = document.querySelector<HTMLElement>('[data-timeline-grid]');
-      const top = dragged.rect.current.translated?.top;
+      // The task lands where the pointer is. A keyboard drag uses the top of the card.
+      const y = pointerOf(e)?.y ?? dragged.rect.current.translated?.top;
       restore();
+      useUI.getState().setDropAt(null);
       // Passing the board's edge on the way here may have nudged it sideways. Put it back.
       document.querySelector('.board')?.scrollTo({ left: boardScroll.current });
-      if (!grid || top === undefined) return;
-      const { dayStart, dayEnd } = store.settings;
-      const raw = dayStart * 60 + (top - grid.getBoundingClientRect().top) / PX_PER_MIN;
-      const start = Math.min(dayEnd * 60 - 15, Math.max(dayStart * 60, snap(raw, 15)));
+      const start = y === undefined ? null : minuteAt(y);
+      if (start === null) return;
       const day = useUI.getState().selectedDay;
       if (original.date !== day) useStore.getState().sendTo(id, day);
       useStore.getState().updateTask(id, { start });
@@ -461,13 +493,15 @@ function Planner() {
         autoScroll={{
           threshold: { x: 0.06, y: 0.2 },
           // The board must not run away while a card is held over the timeline.
-          canScroll: (el) => !(overTimeline.current && el.classList.contains('board')),
+          canScroll: (el) => !((overTimeline.current || towardTimeline.current) && el.classList.contains('board')),
         }}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
+        onDragMove={onDragMove}
         onDragEnd={onDragEnd}
         onDragCancel={() => {
           setActive(null);
+          useUI.getState().setDropAt(null);
           restore();
         }}
       >

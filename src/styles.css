@@ -788,6 +788,10 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+.col-load-note {
+  display: block;
+}
+
 .col-load-text.is-over {
   color: var(--warn);
   font-weight: 600;
@@ -1264,6 +1268,29 @@ li:focus-within > .row-x {
   bottom: 0;
   height: 7px;
   cursor: ns-resize;
+}
+
+.drop-at {
+  position: absolute;
+  left: 46px;
+  right: 0;
+  z-index: 6;
+  height: 0;
+  border-top: 2px dashed var(--accent);
+  pointer-events: none;
+}
+
+.drop-at span {
+  position: absolute;
+  top: -11px;
+  right: 6px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
 .now {

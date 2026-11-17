@@ -15,7 +15,8 @@ export function addFromText(text: string, fallbackDate: ISODate | null, atTop = 
     {
       title: parsed.title,
       date,
-      planned: parsed.planned,
+      // A meeting typed without a length gets the usual half hour, so it shows its real size everywhere.
+      planned: parsed.planned ?? (parsed.start !== null && date !== null ? 30 : null),
       channelId: parsed.channel ? store.channelByName(parsed.channel) : null,
       start: parsed.start,
       // A time someone typed is a commitment. A time from dragging or "Fill my day" is a plan.
