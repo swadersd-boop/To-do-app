@@ -9,10 +9,15 @@ export const DEFAULT_BLOCK = 30;
 /** How long a task's timebox is. */
 export const lengthOf = (t: Task): number => t.blockMin ?? t.planned ?? DEFAULT_BLOCK;
 
-/** The time a task still needs: its estimate minus what was already tracked, in 5-minute steps. */
-export function remainingOf(t: Task): number {
-  if (t.planned === null || t.actualSec < 60) return t.planned ?? DEFAULT_BLOCK;
-  return Math.max(15, Math.ceil((t.planned - t.actualSec / 60) / 5) * 5);
+/** Every block a task has on its day: the first, then any later parts, in time order. */
+export function blocksOf(t: Task): Span[] {
+  if (t.start === null) return [];
+  return [{ start: t.start, end: t.start + lengthOf(t) }, ...(t.parts ?? []).map((p) => ({ start: p.start, end: p.start + p.length }))];
+}
+
+/** Worked for at least as long as the estimate, and not done: the estimate needs another look. */
+export function estimateUsedUp(t: Task): boolean {
+  return !t.done && t.planned !== null && t.actualSec / 60 >= t.planned;
 }
 
 /** A multiplier on a task's estimate, for planning at the pace history shows. */
@@ -24,13 +29,15 @@ export function inProgress(t: Task, from: number): boolean {
 }
 
 /**
- * The timebox a replan gives a task. A task in progress keeps its start, so its
- * block covers the time already worked plus what it still needs. Others get
- * what they still need, scaled by `pace`.
+ * The minutes a task still needs on the timeline: its estimate minus what was
+ * tracked, at `pace`, in 5-minute steps. A task already past its estimate gets
+ * a plain quarter hour; the plan asks for a new estimate instead of guessing.
  */
-export function planLength(t: Task, from: number, pace: Pace = () => 1): number {
-  const needed = Math.max(15, Math.ceil((remainingOf(t) * pace(t)) / 5) * 5);
-  return inProgress(t, from) ? Math.ceil(from / 15) * 15 - t.start! + needed : needed;
+export function needOf(t: Task, pace: Pace = () => 1): number {
+  if (t.planned === null) return DEFAULT_BLOCK;
+  const left = t.planned - t.actualSec / 60;
+  if (left <= 0) return 15;
+  return Math.max(15, Math.ceil((left * pace(t)) / 5) * 5);
 }
 
 /** Tasks for one day (or the backlog when `date` is null), in display order. */
@@ -54,7 +61,7 @@ export function moveTask(tasks: Task[], id: string, date: ISODate | null, index:
     if (next === undefined) return t;
     if (t.id === id) {
       const keepsTime = t.date === date || (t.fixed && date !== null);
-      return { ...t, date, order: next, start: keepsTime ? t.start : null, fixed: date === null ? false : t.fixed };
+      return { ...t, date, order: next, start: keepsTime ? t.start : null, parts: t.date === date ? t.parts : null, fixed: date === null ? false : t.fixed };
     }
     return next === t.order ? t : { ...t, order: next };
   });
@@ -83,7 +90,7 @@ export function rollover(tasks: Task[], today: ISODate, parkAfter: number | null
   return tasks.map((t) => {
     const next = order.get(t.id);
     if (next === undefined) return t;
-    const moved = { ...t, order: next, start: null, blockMin: null, rolled: t.rolled + 1, trackedBefore: t.actualSec };
+    const moved = { ...t, order: next, start: null, blockMin: null, parts: null, rolled: t.rolled + 1, trackedBefore: t.actualSec };
     return parks(t) ? { ...moved, date: null, parkedOn: today } : { ...moved, date: today };
   });
 }
@@ -93,17 +100,101 @@ export interface Span {
   end: number;
 }
 
+export interface Placement {
+  /** The blocks a task gets, in time order. A long task can be split around meetings and breaks. */
+  blocks: Span[];
+}
+
+/** Free stretches between `from` and `until` around `busy`. Each starts on a quarter hour. */
+function gapsAround(busy: Span[], from: number, until: number): Span[] {
+  const gaps: Span[] = [];
+  let cursor = from;
+  for (const slot of [...busy].sort((a, b) => a.start - b.start)) {
+    if (slot.end <= cursor) continue;
+    if (slot.start > cursor) gaps.push({ start: cursor, end: Math.min(slot.start, until) });
+    cursor = Math.max(cursor, Math.ceil(slot.end / 15) * 15);
+    if (cursor >= until) break;
+  }
+  if (cursor < until) gaps.push({ start: cursor, end: until });
+  return gaps.filter((g) => g.end > g.start);
+}
+
+/** Where `need` minutes go: whole in the first gap that holds them, or for long work split over up to three gaps. */
+function fit(need: number, gaps: Span[]): Span[] | null {
+  if (need < 60) {
+    const gap = gaps.find((g) => g.end - g.start >= need);
+    return gap ? [{ start: gap.start, end: gap.start + need }] : null;
+  }
+  const pieces: Span[] = [];
+  let rest = need;
+  for (const g of gaps) {
+    const room = Math.floor((g.end - g.start) / 5) * 5;
+    if (room >= rest) {
+      pieces.push({ start: g.start, end: g.start + rest });
+      return pieces;
+    }
+    // Only the last piece may be shorter than the gap; every piece is at least half an hour.
+    if (pieces.length < 2 && room >= 30) {
+      const part = rest - room >= 30 ? room : Math.floor((rest - 30) / 5) * 5;
+      if (part >= 30) {
+        pieces.push({ start: g.start, end: g.start + part });
+        rest -= part;
+      }
+    }
+  }
+  return null;
+}
+
 /**
- * Replans the rest of a day. Every unfinished flexible task is laid out again
- * from `from`, and the list order is the priority: the first task picks its
- * slot first, and whatever does not fit is what drops off, never the task you
- * put on top. A task that was partly done books only the time it still needs.
- * Fixed commitments, finished tasks and `breaks` (such as lunch) are worked
- * around and never move. `budget` caps the minutes of work placed.
+ * Plans the rest of a day. Unfinished flexible tasks are placed in list order,
+ * which is the priority: each takes the earliest free time from `from`, and a
+ * task of an hour or more continues after a meeting or break in up to three
+ * blocks rather than waiting for one gap long enough for all of it. Work under
+ * way keeps the block where it was worked, and only what it still needs is
+ * planned. Fixed commitments, finished work and `breaks` never move. `budget`
+ * caps the minutes of new work placed.
  *
- * Returns a start for every flexible task: a number, or null when it did not
- * fit before `until` or within `budget`.
+ * Returns the blocks for every flexible task, or null when it did not fit.
  */
+export function planDay(
+  day: Task[],
+  from: number,
+  until: number,
+  breaks: Span[] = [],
+  budget = Number.POSITIVE_INFINITY,
+  pace: Pace = () => 1,
+): Record<string, Placement | null> {
+  const first = Math.ceil(from / 15) * 15;
+  const out: Record<string, Placement | null> = {};
+  const busy: Span[] = [...breaks, ...day.filter((t) => t.done || t.fixed).flatMap(blocksOf)];
+  // The part already worked stays as a record of where it happened.
+  for (const t of day.filter((x) => inProgress(x, first))) {
+    const record = { start: t.start!, end: Math.min(t.start! + lengthOf(t), first) };
+    busy.push(record);
+    out[t.id] = { blocks: [record] };
+  }
+  let used = 0;
+  for (const t of day) {
+    if (t.done || t.fixed) continue;
+    const record = out[t.id]?.blocks ?? [];
+    const need = needOf(t, pace);
+    const pieces = used + need <= budget ? fit(need, gapsAround(busy, first, until)) : null;
+    if (!pieces) {
+      out[t.id] = record.length > 0 ? { blocks: record } : null;
+      continue;
+    }
+    busy.push(...pieces);
+    used += need;
+    // Work that carries straight on from where it stands is one block, not two.
+    const joined = record.length > 0 && pieces[0].start === record[record.length - 1].end;
+    out[t.id] = {
+      blocks: joined ? [...record.slice(0, -1), { start: record[record.length - 1].start, end: pieces[0].end }, ...pieces.slice(1)] : [...record, ...pieces],
+    };
+  }
+  return out;
+}
+
+/** The start of each flexible task's first block, or null when it did not fit. */
 export function autoSchedule(
   day: Task[],
   from: number,
@@ -112,68 +203,8 @@ export function autoSchedule(
   budget = Number.POSITIVE_INFINITY,
   pace: Pace = () => 1,
 ): Record<string, number | null> {
-  const first = Math.ceil(from / 15) * 15;
-  const placed: Record<string, number | null> = {};
-  let used = 0;
-  const busy: Span[] = [
-    ...breaks,
-    ...day.filter((t) => t.start !== null && (t.done || t.fixed)).map((t) => ({ start: t.start!, end: t.start! + lengthOf(t) })),
-  ];
-  // Work under way stays where it started; only the rest of it is planned.
-  for (const t of day.filter((x) => inProgress(x, first))) {
-    placed[t.id] = t.start;
-    busy.push({ start: t.start!, end: t.start! + planLength(t, first, pace) });
-    used += planLength(t, first, pace) - (first - t.start!);
-  }
-
-  for (const task of day) {
-    if (task.done || task.fixed || placed[task.id] !== undefined) continue;
-    const length = planLength(task, first, pace);
-    // Past the day's capacity, the rest waits for another day even if the clock has room.
-    if (used + length > budget) {
-      placed[task.id] = null;
-      continue;
-    }
-    // Each task, in priority order, takes the earliest gap it fits in, so short
-    // gaps before a meeting get used by a short task further down the list.
-    busy.sort((a, b) => a.start - b.start);
-    let start = first;
-    for (const slot of busy) {
-      if (slot.end <= start) continue;
-      if (slot.start >= start + length) break;
-      start = Math.ceil(slot.end / 15) * 15;
-    }
-    if (start + length > until) {
-      placed[task.id] = null;
-      continue;
-    }
-    placed[task.id] = start;
-    busy.push({ start, end: start + length });
-    used += length;
-  }
-  return placed;
-}
-
-/**
- * Every stretch of at least `minLength` minutes between `from` and `until` that
- * is free of fixed commitments, finished work and breaks. Flexible plans do not
- * count, since they can move.
- */
-export function freeGaps(day: Task[], from: number, until: number, breaks: Span[] = [], minLength = 30): { start: number; length: number }[] {
-  const busy = [
-    ...breaks,
-    ...day.filter((t) => t.start !== null && (t.fixed || t.done)).map((t) => ({ start: t.start!, end: t.start! + lengthOf(t) })),
-  ].sort((a, b) => a.start - b.start);
-  const gaps: { start: number; length: number }[] = [];
-  let cursor = Math.ceil(from / 15) * 15;
-  for (const slot of [...busy, { start: until, end: until }]) {
-    if (slot.end <= cursor) continue;
-    const end = Math.min(slot.start, until);
-    if (end - cursor >= minLength) gaps.push({ start: cursor, length: end - cursor });
-    cursor = Math.max(cursor, Math.ceil(slot.end / 15) * 15);
-    if (cursor >= until) break;
-  }
-  return gaps;
+  const plan = planDay(day, from, until, breaks, budget, pace);
+  return Object.fromEntries(Object.entries(plan).map(([id, p]) => [id, p ? p.blocks[0].start : null]));
 }
 
 /** Minutes left for flexible work between `from` and `until`, after fixed commitments and breaks. */
@@ -225,10 +256,9 @@ export function focusTarget(day: Task[], now: number): Task | null {
 export function timelineRange(day: Task[], dayStart: number, dayEnd: number): { start: number; end: number } {
   let start = dayStart;
   let end = dayEnd;
-  for (const t of day) {
-    if (t.start === null) continue;
-    start = Math.min(start, Math.floor(t.start / 60));
-    end = Math.max(end, Math.min(24, Math.ceil((t.start + lengthOf(t)) / 60)));
+  for (const b of day.flatMap(blocksOf)) {
+    start = Math.min(start, Math.floor(b.start / 60));
+    end = Math.max(end, Math.min(24, Math.ceil(b.end / 60)));
   }
   return { start, end };
 }

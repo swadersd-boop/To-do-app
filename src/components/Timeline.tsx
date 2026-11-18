@@ -189,6 +189,8 @@ export function Timeline() {
   const today = useUI((s) => s.today);
   const notify = useUI((s) => s.notify);
   const dropAt = useUI((s) => s.dropAt);
+  const channels = useStore((s) => s.channels);
+  const channelColor = (id: string | null) => channels.find((c) => c.id === id)?.color;
   const log = useStore((s) => s.days[day]);
   const tasks = useStore((s) => s.tasks);
   const autoSchedule = useStore((s) => s.autoSchedule);
@@ -217,6 +219,7 @@ export function Timeline() {
     () =>
       layoutBlocks([
         ...boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) })),
+        ...boxed.flatMap((t) => (t.parts ?? []).map((p, i) => ({ id: `${t.id}:part${i}`, start: p.start, end: p.start + Math.max(STEP, p.length) }))),
         ...traces.map((w) => ({ id: w.id, start: w.start, end: w.start + w.length })),
       ]),
     [boxed],
@@ -331,6 +334,36 @@ export function Timeline() {
                 </div>
               );
             })}
+            {boxed.flatMap((t) =>
+              (t.parts ?? []).map((p, i) => {
+                const key = `${t.id}:part${i}`;
+                const width = 100 / (layout[key]?.cols ?? 1);
+                return (
+                  <div
+                    key={key}
+                    className={`block is-part ${t.done ? 'is-done' : ''} ${p.length <= 30 ? 'is-short' : ''}`}
+                    style={{
+                      top: (p.start - dayStartMin) * PX_PER_MIN,
+                      height: Math.max(STEP, p.length) * PX_PER_MIN - 2,
+                      left: `calc(${(layout[key]?.col ?? 0) * width}% + 2px)`,
+                      width: `calc(${width}% - 4px)`,
+                      borderLeftColor: channelColor(t.channelId) ?? 'var(--accent)',
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${t.title}, continued, ${fmtClock(p.start)} to ${fmtClock(p.start + p.length)}`}
+                    onClick={() => useUI.getState().openTask(t.id)}
+                    onKeyDown={(e) => e.key === 'Enter' && useUI.getState().openTask(t.id)}
+                    title="The same task, continued after a meeting or break"
+                  >
+                    <span className="block-title">{t.title} (continued)</span>
+                    <span className="block-time">
+                      {fmtClock(p.start)} to {fmtClock(p.start + p.length)}
+                    </span>
+                  </div>
+                );
+              }),
+            )}
             {boxed.map((t) => (
               <Block key={t.id} task={t} col={layout[t.id]?.col ?? 0} cols={layout[t.id]?.cols ?? 1} dayStartMin={dayStartMin} dayEndMin={dayEndMin} />
             ))}

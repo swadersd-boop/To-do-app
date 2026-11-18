@@ -5,10 +5,10 @@ import type { ISODate } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText } from '../actions';
-import { occursOn, tasksOn } from '../lib/model';
+import { needOf, occursOn, tasksOn } from '../lib/model';
 import { isWeekend, relativeDay, shortDate, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { fixedTotal, trackedOn, workTotal } from '../lib/stats';
+import { fixedTotal, paceOf, trackedOn } from '../lib/stats';
 import { AddLine, LoadBar } from './bits';
 import { GhostCard, TaskCard } from './TaskCard';
 
@@ -23,6 +23,9 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const selectDay = useUI((s) => s.selectDay);
 
   const list = useMemo(() => tasksOn(tasks, date), [tasks, date]);
+  const atPace = useStore((s) => s.settings.planAtPace !== false);
+  const measured = useMemo(() => (atPace ? paceOf(tasks) : null), [tasks, atPace]);
+  const pace = measured ?? undefined;
   // The quick-add hint is for people still getting started.
   const newcomer = useMemo(() => tasks.filter((t) => !t.example).length < 10, [tasks]);
   const isToday = date === today;
@@ -34,7 +37,8 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   );
   const open = list.filter((t) => !t.done);
   const upcoming = [...open, ...ghosts];
-  const planned = workTotal(upcoming);
+  // What the day's open to-dos still need, measured like the plan: estimate minus time done, at your pace.
+  const planned = upcoming.filter((t) => !t.fixed).reduce((sum, t) => sum + needOf(t, pace), 0);
   const fixed = fixedTotal(upcoming);
   const doneCount = list.filter((t) => t.done && !t.fixed).length;
   const tracked = trackedOn(list, log);

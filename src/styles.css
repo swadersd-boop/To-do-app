@@ -874,6 +874,12 @@ textarea::placeholder {
   box-shadow: none;
 }
 
+.card.is-unconfirmed {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+}
+
 .card.is-done .card-title {
   color: var(--ink-3);
   text-decoration: line-through;
@@ -907,7 +913,8 @@ textarea::placeholder {
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   min-height: 22px;
   margin: 8px 0 0 29px;
 }
@@ -1185,6 +1192,12 @@ li:focus-within > .row-x {
   padding-bottom: 0;
 }
 
+.block.is-part {
+  border-style: dashed;
+  border-left-style: solid;
+  cursor: pointer;
+}
+
 .block.is-trace {
   border-style: dashed;
   border-left-style: solid;
@@ -1290,7 +1303,8 @@ li:focus-within > .row-x {
 
 /* On touch the resize handle is visible and big enough for a finger; the tiniest blocks have none. */
 @media (pointer: coarse) {
-  .block.is-tiny .block-grip {
+  /* On a short block the handle would cover the time, and a finger cannot hit it apart from the block anyway. */
+  .block.is-short .block-grip {
     display: none;
   }
 

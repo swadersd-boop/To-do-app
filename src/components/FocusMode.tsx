@@ -49,12 +49,13 @@ export function FocusMode() {
 
   const plannedSec = (task.planned ?? 0) * 60;
   const pct = plannedSec > 0 ? Math.min(100, (seconds / plannedSec) * 100) : 0;
-  const over = plannedSec > 0 && seconds > plannedSec;
+  // Over by a whole minute before saying so.
+  const over = plannedSec > 0 && seconds >= plannedSec + 60;
 
   // Finishing or skipping stops the clock. The next task waits until you press Start.
   const advance = (markDone: boolean) => {
     // A quick second press (a double click) must not finish the next task too.
-    if (Date.now() - lastAdvance.current < 900) return;
+    if (Date.now() - lastAdvance.current < 2000) return;
     lastAdvance.current = Date.now();
     // Finished without ever pressing Start: count the time since it opened here, and say so.
     const openedAt = useUI.getState().focusOpenedAt;
@@ -150,7 +151,7 @@ export function FocusMode() {
         </div>
 
         <p className="focus-next">
-          {next ? `Up next: ${next.title}${next.start !== null ? ` at ${fmtClock(next.start)}` : ''}` : 'Nothing else to work on today.'}
+          {next ? `Up next: ${next.title}${next.start !== null && next.start > nowMin ? ` at ${fmtClock(next.start)}` : ''}` : 'Nothing else to work on today.'}
           {meeting && (
             <>
               <br />

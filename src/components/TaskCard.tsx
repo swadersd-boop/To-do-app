@@ -20,9 +20,17 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
   const subDone = task.subtasks.filter((s) => s.done).length;
 
   return (
-    <div className={`card ${task.done ? 'is-done' : ''} ${running ? 'is-running' : ''} ${dragging ? 'is-dragging' : ''}`}>
+    <div className={`card ${task.done && !task.unconfirmed ? 'is-done' : ''} ${task.unconfirmed ? 'is-unconfirmed' : ''} ${running ? 'is-running' : ''} ${dragging ? 'is-dragging' : ''}`}>
       <div className="card-top">
-        <CheckCircle checked={task.done} onChange={() => toggleDone(task.id)} label={task.done ? 'Mark as not done' : 'Mark as done'} />
+        {task.unconfirmed ? (
+          <CheckCircle
+            checked={false}
+            onChange={() => useStore.getState().updateTask(task.id, { unconfirmed: false })}
+            label="Its time passed while Kalm was closed. Tick to confirm it took place."
+          />
+        ) : (
+          <CheckCircle checked={task.done} onChange={() => toggleDone(task.id)} label={task.done ? 'Mark as not done' : 'Mark as done'} />
+        )}
         <span className="card-title">{task.title}</span>
         {!task.done && (
           <button
@@ -57,6 +65,7 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
             {subDone}/{task.subtasks.length}
           </span>
         )}
+        {task.unconfirmed && <span className="meta" title="Its time passed while Kalm was closed">passed, not confirmed</span>}
         {task.repeat && (
           <span className="meta" title={task.repeat === 'daily' ? 'Repeats every day' : task.repeat === 'weekdays' ? 'Repeats every weekday' : 'Repeats every week'}>
             <Repeat size={11} />

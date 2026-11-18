@@ -92,6 +92,32 @@ await page.getByRole('button', { name: 'Earlier' }).click();
 assert.equal(await wednesday.locator('.col-load-text').innerText(), 'Not planned · 2 moved on');
 assert.equal(await wednesday.locator('.card-moved').count(), 2);
 
+// 8. A fresh Monday: the task typed first is planned first, in the morning, and continues after the standup.
+await ctx.close();
+({ ctx, page } = await open('2026-11-16T08:40:00+01:00'));
+await page.getByRole('button', { name: 'Settings', exact: true }).click();
+await page.locator('input[type=file]').setInputFiles(FIXTURE);
+await page.locator('.toast', { hasText: 'Backup restored' }).waitFor();
+await page.keyboard.press('Escape');
+await page.locator('.backdrop').waitFor({ state: 'detached' });
+await page.getByRole('button', { name: 'Plan today', exact: true }).click();
+const monday = page.getByRole('dialog');
+await monday.getByRole('button', { name: 'Next' }).click();
+await monday.getByRole('button', { name: 'Next' }).click();
+for (const t of ['Hiring plan 3h #work', 'Emails 20m #admin']) {
+  await monday.getByLabel('Add a task to today').fill(t);
+  await page.keyboard.press('Enter');
+}
+const chosen = await monday.locator('.ritual-cols > div').first().locator('.ritual-row-title').allInnerTexts();
+assert.deepEqual(chosen.slice(0, 2), ['Hiring plan', 'Emails'], 'tasks keep the order they were typed in');
+await monday.getByRole('button', { name: 'Next' }).click();
+await monday.getByRole('button', { name: 'Next' }).click();
+await monday.getByRole('button', { name: 'Start my day' }).click();
+await page.locator('.backdrop').waitFor({ state: 'detached' });
+const first = await page.locator('.block:not(.is-part)', { hasText: 'Hiring plan' }).getAttribute('aria-label');
+assert.match(first, /Hiring plan, 08:45 to/, 'the top task starts first thing');
+assert.ok((await page.locator('.block.is-part', { hasText: 'Hiring plan (continued)' }).count()) >= 1, 'and continues after the standup');
+
 await browser.close();
 assert.deepEqual(errors, [], 'no page errors');
 console.log('History test passed.');

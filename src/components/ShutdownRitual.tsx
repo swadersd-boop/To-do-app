@@ -21,6 +21,7 @@ export function ShutdownRitual() {
   const tasks = useStore((s) => s.tasks);
   const channels = useStore((s) => s.channels);
   const saved = useStore((s) => s.days[today]);
+  const parkLimit = useStore((s) => (s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter));
   const { sendTo, setDay, toggleDone, updateTask, stopTimer } = useStore.getState();
 
   const [step, setStep] = useState(0);
@@ -114,14 +115,21 @@ export function ShutdownRitual() {
           {open.length > 0 && (
             <>
               <h4>Not done ({open.length})</h4>
-              <p className="lede">These move to tomorrow on their own. Send anything that can wait to the backlog instead.</p>
+              <p className="lede">
+                {open.some((t) => parkLimit !== null && t.rolled >= parkLimit)
+                  ? 'These move to tomorrow on their own, except the ones marked for the backlog. Send anything else that can wait to the backlog too.'
+                  : 'These move to tomorrow on their own. Send anything that can wait to the backlog instead.'}
+              </p>
               <ul className="ritual-list">
                 {open.map((t) => (
                   <li key={t.id} className="ritual-row">
                     <CheckCircle checked={false} onChange={() => toggleDone(t.id)} label={`Mark ${t.title} as done`} size={18} />
                     <div className="ritual-row-main">
                       <span className="ritual-row-title">{t.title}</span>
-                      <ChannelPill channelId={t.channelId} />
+                      <span className="row">
+                        <ChannelPill channelId={t.channelId} />
+                        {parkLimit !== null && t.rolled >= parkLimit && <span className="meta meta-warn">goes to the backlog tonight</span>}
+                      </span>
                     </div>
                     <div className="row">
                       <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>

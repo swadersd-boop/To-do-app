@@ -18,7 +18,7 @@ Kalm runs entirely in your browser. There is no account and no server, and your 
 - **Channels, steps and notes** on every task, and tasks can be linked to a weekly objective.
 - **Repeating tasks.** Daily, weekdays or weekly. Upcoming days show a preview, and each occurrence becomes real when you finish the one before it, so missed ones never pile up.
 - **Rollover without a pile.** Unfinished tasks move on to the next working day, after whatever is already planned there; Friday's leftovers wait for Monday. A task that has moved on three times (or put off three times) goes to the backlog by itself, and the next plan tells you so, with "Bring back to today". New work you add while planning goes to the top. What does not fit moves to tomorrow when you start your day, and stays out of the plan you share. Past days keep the record: what got done, the time tracked, and the tasks that moved on, with any time already worked on them.
-- **Splitting.** When your top task is too long for any free stretch before its slot, the plan offers to split it so the first part starts in the morning.
+- **Priority first.** The plan fills your day in list order. The task at the top gets the first free time, and a long task continues after a meeting or lunch as a second block instead of waiting for one gap long enough for all of it. Work already under way stays where it was done, and only what is left is planned. Every total (the plan, the column, the recap) counts what each task still needs, at your pace.
 - **Works offline** and installs as an app from the browser menu.
 
 ## Quick add

@@ -49,10 +49,14 @@ export interface Task {
    * half-done task books only the time it still needs.
    */
   blockMin?: number | null;
+  /** Later blocks of the same task on the same day, when the plan splits it around meetings or breaks. */
+  parts?: { start: number; length: number }[] | null;
   /** Seconds tracked on earlier days, before the task was carried over to this one. */
   trackedBefore?: number;
   /** The day the task was moved to the backlog by itself, after moving on too many times. */
   parkedOn?: ISODate | null;
+  /** A meeting counted as passed while the app was closed: nobody confirmed it took place. */
+  unconfirmed?: boolean;
 }
 
 export interface Channel {

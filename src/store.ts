@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, isWeekend, todayISO, weekStart } from './lib/dates';
 import { paceOf } from './lib/stats';
-import { autoSchedule, byTime, lengthOf, moveTask, nextOccurrence, planLength, rollover, tasksOn, type Pace, type Span } from './lib/model';
+import { DEFAULT_BLOCK, byTime, lengthOf, moveTask, nextOccurrence, planDay, rollover, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -104,6 +104,8 @@ interface Actions {
   moveTask: (id: string, date: ISODate | null, index: number) => void;
   /** Moves a task to the end of a day or the backlog. */
   sendTo: (id: string, date: ISODate | null) => void;
+  /** Takes a task out of the backlog onto a day, starting its moved-on count again. */
+  bringBack: (id: string, date: ISODate) => void;
   /**
    * Puts an unfinished task off to a later day. Counts as moving on, like an
    * overnight carry-over, and parks it in the backlog past the same limit.
@@ -136,8 +138,6 @@ interface Actions {
   /** Removes an objective and unlinks its tasks. Returns what is needed to undo it. */
   deleteObjective: (id: string) => { objective: Objective; linked: string[] } | null;
   restoreObjective: (objective: Objective, linked: string[]) => void;
-  /** Splits a task so its first part needs `firstMin` more minutes. Returns the new second part's id. */
-  splitTask: (id: string, firstMin: number) => string | null;
 
   setDay: (date: ISODate, patch: DayLog) => void;
   setSettings: (patch: Partial<Settings>) => void;
@@ -236,7 +236,9 @@ export const useStore = create<Store>()(
           const merge = (t: Task): Task => {
             // A new estimate replaces a shortened timebox.
             const next = { ...t, ...(patch.planned !== undefined && patch.blockMin === undefined ? { blockMin: null } : {}), ...patch };
-            return next.fixed && next.start === null ? { ...next, fixed: false } : next;
+            // Without a time there are no later blocks either.
+            const timed = next.start === null ? { ...next, parts: null } : next;
+            return timed.fixed && timed.start === null ? { ...timed, fixed: false } : timed;
           };
           let tasks = s.tasks.map((t) => (t.id === id ? merge(t) : t));
           // Making a finished task repeat starts the series from it right away.
@@ -283,7 +285,7 @@ export const useStore = create<Store>()(
             // Taking back a repeating task also takes back the occurrence it created, unless that one was worked on.
             const spawned = task.nextId ? tasks.find((t) => t.id === task.nextId) : undefined;
             if (spawned && !spawned.done && spawned.actualSec === 0) tasks = tasks.filter((t) => t.id !== spawned.id);
-            tasks = tasks.map((t) => (t.id === id ? { ...t, done: false, doneAt: null, nextId: null } : t));
+            tasks = tasks.map((t) => (t.id === id ? { ...t, done: false, doneAt: null, nextId: null, unconfirmed: false } : t));
             return { timer: settled.timer, tasks };
           }
 
@@ -296,16 +298,19 @@ export const useStore = create<Store>()(
           if (!task.fixed && task.date === todayISO(now) && spentMin >= 5) {
             const length = Math.max(15, Math.round(spentMin / 5) * 5);
             const start = Math.max(0, Math.floor((nowMin - spentMin) / 5) * 5);
-            tasks = tasks.map((t) => (t.id === id ? { ...t, start, blockMin: length } : t));
+            tasks = tasks.map((t) => (t.id === id ? { ...t, start, blockMin: length, parts: null } : t));
           } else if (!task.fixed && task.date === todayISO(now) && task.start !== null) {
             // Without tracked time: finishing early frees the slot planned for later,
             // and a block finished partway through shrinks to the time it took.
             const start = task.start;
             if (start > nowMin) {
-              tasks = tasks.map((t) => (t.id === id ? { ...t, start: null, blockMin: null } : t));
+              tasks = tasks.map((t) => (t.id === id ? { ...t, start: null, blockMin: null, parts: null } : t));
             } else if (start + lengthOf(task) > nowMin) {
               const took = Math.max(15, Math.ceil((nowMin - start) / 5) * 5);
-              tasks = tasks.map((t) => (t.id === id ? { ...t, blockMin: took } : t));
+              tasks = tasks.map((t) => (t.id === id ? { ...t, blockMin: took, parts: null } : t));
+            } else {
+              // Finished: later blocks planned for it are no longer needed.
+              tasks = tasks.map((t) => (t.id === id ? { ...t, parts: null } : t));
             }
           }
           return { timer: settled.timer, tasks };
@@ -319,12 +324,19 @@ export const useStore = create<Store>()(
           if (over.length === 0) return s;
           let tasks = s.tasks;
           for (const t of over) tasks = complete(tasks, tasks.find((x) => x.id === t.id)!, today);
-          return { tasks };
+          // A meeting whose day passed with the app closed is counted, but not as confirmed.
+          const unseen = new Set(over.filter((t) => t.date! < today).map((t) => t.id));
+          return { tasks: unseen.size > 0 ? tasks.map((t) => (unseen.has(t.id) ? { ...t, unconfirmed: true } : t)) : tasks };
         }),
 
       moveTask: (id, date, index) => set((s) => ({ tasks: moveTask(s.tasks, id, date, index) })),
 
       sendTo: (id, date) => set((s) => ({ tasks: moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER) })),
+
+      bringBack: (id, date) =>
+        set((s) => ({
+          tasks: moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER).map((t) => (t.id === id ? { ...t, rolled: 0, parkedOn: null } : t)),
+        })),
 
       defer: (id, date) => {
         const s = get();
@@ -375,11 +387,19 @@ export const useStore = create<Store>()(
         const budget = Math.max(0, s.settings.capacityMin - doneToday);
         // Round to the quarter hour here too, so the store and the scheduler agree on what is under way.
         const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 15) * 15;
-        const plan = autoSchedule(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace);
+        const plan = planDay(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace);
         const scheduled = s.tasks.map((t) => {
-          if (plan[t.id] === undefined) return t;
-          const length = planLength(t, start, pace);
-          return { ...t, start: plan[t.id], blockMin: plan[t.id] !== null && length !== (t.planned ?? length) ? length : null };
+          const placement = plan[t.id];
+          if (placement === undefined) return t;
+          if (placement === null) return { ...t, start: null, blockMin: null, parts: null };
+          const [head, ...later] = placement.blocks;
+          const length = head.end - head.start;
+          return {
+            ...t,
+            start: head.start,
+            blockMin: length === (t.planned ?? DEFAULT_BLOCK) ? null : length,
+            parts: later.length > 0 ? later.map((b) => ({ start: b.start, length: b.end - b.start })) : null,
+          };
         });
         // The list now reads in the order the day will go.
         const order = new Map(byTime(tasksOn(scheduled, date)).map((t, i) => [t.id, i]));
@@ -392,7 +412,7 @@ export const useStore = create<Store>()(
 
       clearSchedule: (date) =>
         set((s) => ({
-          tasks: s.tasks.map((t) => (t.date === date && !t.done && !t.fixed && t.start !== null ? { ...t, start: null } : t)),
+          tasks: s.tasks.map((t) => (t.date === date && !t.done && !t.fixed && t.start !== null ? { ...t, start: null, blockMin: null, parts: null } : t)),
         })),
 
       removeExamples: () =>
@@ -474,30 +494,6 @@ export const useStore = create<Store>()(
           tasks: s.tasks.map((t) => (t.objectiveId === id ? { ...t, objectiveId: null } : t)),
         }));
         return { objective, linked };
-      },
-
-      splitTask: (id, firstMin) => {
-        const task = get().tasks.find((t) => t.id === id);
-        if (!task || task.planned === null) return null;
-        const spentMin = Math.round(task.actualSec / 60);
-        const rest = task.planned - spentMin - firstMin;
-        if (rest < 5 || firstMin < 5) return null;
-        const base = task.title.replace(/ \(part 1\)$/, '');
-        const second: Task = {
-          ...makeTask({ title: `${base} (part 2)`, date: task.date, planned: rest, channelId: task.channelId, notes: task.notes }, task.order + 1),
-          objectiveId: task.objectiveId,
-        };
-        set((s) => ({
-          tasks: [
-            ...s.tasks.map((t) => {
-              if (t.id === id) return { ...t, title: `${base} (part 1)`, planned: spentMin + firstMin, blockMin: null };
-              // Make room right after the first part.
-              return t.date === task.date && t.order > task.order ? { ...t, order: t.order + 1 } : t;
-            }),
-            second,
-          ],
-        }));
-        return second.id;
       },
 
       restoreObjective: (objective, linked) =>

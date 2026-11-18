@@ -298,16 +298,6 @@ describe('store', () => {
     expect(store().tasks.filter((t) => t.title === 'Standup' && !t.done).map((t) => t.date)).toEqual([today]);
   });
 
-  it('splits a task in two, keeping the tracked time on the first part', () => {
-    const id = store().addTask({ title: 'Design onboarding', date: today, planned: 180, channelId: 'work' });
-    const after = store().addTask({ title: 'Emails', date: today, planned: 30 });
-    store().updateTask(id, { actualSec: 30 * 60 });
-    const second = store().splitTask(id, 60)!;
-    expect(find(id)).toMatchObject({ title: 'Design onboarding (part 1)', planned: 90, actualSec: 30 * 60 });
-    expect(find(second)).toMatchObject({ title: 'Design onboarding (part 2)', planned: 90, actualSec: 0, channelId: 'work', date: today });
-    expect(tasksOn(store().tasks, today).map((t) => t.id)).toEqual([id, second, after]);
-  });
-
   it('counts putting a task off as moving on, so it parks like a carried one', () => {
     const id = store().addTask({ title: 'Someday report', date: today, planned: 60 });
     for (let i = 0; i < 3; i++) store().defer(id, addDays(today, i + 1));
@@ -321,6 +311,24 @@ describe('store', () => {
     store().updateTask(id, { rolled: 3 });
     expect(store().defer(id, addDays(today, 1))).toBe('backlog');
     expect(find(id)).toMatchObject({ date: null, parkedOn: addDays(today, 1), rolled: 4 });
+  });
+
+  it('starts the count again for a task brought back from the backlog', () => {
+    const id = store().addTask({ title: 'Design onboarding', date: yesterday, planned: 60 });
+    store().updateTask(id, { rolled: 3 });
+    store().rollover(today);
+    expect(find(id).date).toBeNull();
+    store().bringBack(id, today);
+    expect(find(id)).toMatchObject({ date: today, rolled: 0, parkedOn: null });
+  });
+
+  it('marks a meeting from a day the app was not open as passed, not attended', () => {
+    const id = store().addTask({ title: 'Standup', date: yesterday, planned: 15, start: 570, fixed: true });
+    const same = store().addTask({ title: 'Review', date: today, planned: 30, start: 540, fixed: true });
+    store().settleCommitments(today, 12 * 60);
+    expect(find(id)).toMatchObject({ done: true, unconfirmed: true });
+    expect(find(same)).toMatchObject({ done: true });
+    expect(find(same).unconfirmed).toBeFalsy();
   });
 
   it('removes only the example tasks', () => {

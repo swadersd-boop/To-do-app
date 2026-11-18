@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ArrowUp, Copy, Link2, Plus, Trash2 } from 'lucide-react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText, copyText, deferOne, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
-import { autoSchedule as planDay, byTime, freeGaps, freeMinutes, planLength, remainingOf, tasksOn } from '../lib/model';
+import { autoSchedule as planDay, byTime, estimateUsedUp, freeMinutes, needOf, tasksOn } from '../lib/model';
 import { addDays, longDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, weekSummary } from '../lib/stats';
@@ -41,9 +41,21 @@ function Row({ task, children }: { task: Task; children: React.ReactNode }) {
           {task.rolled > 0 && !task.done && (
             <span className={`meta ${task.rolled >= 3 ? 'meta-warn' : ''}`}>moved on {task.rolled === 1 ? 'once' : `${task.rolled} times`}</span>
           )}
+          {task.actualSec >= 60 && !estimateUsedUp(task) && <span className="meta">{fmtMin(task.actualSec / 60)} done</span>}
+          {estimateUsedUp(task) && (
+            <span className="meta meta-warn">
+              {fmtMin(task.actualSec / 60)} done, past the estimate. How much is left?
+            </span>
+          )}
         </span>
       </div>
-      <EstimateChip value={task.planned} onChange={(planned) => updateTask(task.id, { planned })} />
+      <EstimateChip
+        value={estimateUsedUp(task) ? null : task.planned}
+        onChange={(min) =>
+          // For a task past its estimate, the number picked is the time still needed.
+          updateTask(task.id, { planned: estimateUsedUp(task) && min !== null ? Math.round(task.actualSec / 60) + min : min })
+        }
+      />
       <div className="row">{children}</div>
     </li>
   );
@@ -95,14 +107,19 @@ export function PlanRitual() {
   // Tasks the rollover sent to the backlog this morning, after moving on too many times.
   const parked = tasks.filter((t) => t.date === null && t.parkedOn === today);
   const [deferRest, setDeferRest] = useState(true);
+  /** How many tasks were typed in during this plan, so each new one goes below the last. */
+  const added = useRef(0);
 
   // What the open to-dos still need: estimates minus time already tracked, at your measured pace if you choose.
   const pace = useMemo(() => paceOf(tasks), [tasks]);
   const atPace = settings.planAtPace !== false;
   const setAtPace = (on: boolean) => useStore.getState().setSettings({ planAtPace: on });
   const usePace = atPace && pace !== null ? pace : undefined;
-  const estimated = open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t), 0);
-  const planned = usePace ? open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t) * usePace(t), 0) : estimated;
+  // The same measure the timeline uses: what each task still needs, rounded the same way.
+  const todo = open.filter((t) => !t.fixed);
+  const estimated = todo.reduce((sum, t) => sum + needOf(t), 0);
+  const atRealPace = pace ? todo.reduce((sum, t) => sum + needOf(t, pace), 0) : estimated;
+  const planned = usePace ? atRealPace : estimated;
   const fixed = fixedTotal(open);
   const missing = open.filter((t) => t.planned === null).length;
 
@@ -127,19 +144,6 @@ export function PlanRitual() {
   const ordered = byTime(
     open.filter((t) => !(deferRest && wontFit.includes(t))).map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)),
   );
-  // The top task should not start after lower ones just because no early gap is long enough for all of it.
-  const top = open.find((t) => !t.fixed);
-  // The longest free stretch before the top task's planned start, if it is too short for all of it.
-  const gap =
-    top && fill && preview[top.id] != null
-      ? (freeGaps(open, from, until, breaks, 30)
-          .filter((g) => g.start < preview[top.id]!)
-          .sort((a, b) => b.length - a.length)[0] ?? null)
-      : null;
-  const splitAt =
-    top && gap && top.planned !== null && gap.length < planLength(top, from, usePace)
-      ? Math.floor(gap.length / (usePace ? usePace(top) : 1) / 5) * 5
-      : null;
   const summary = planText(today, ordered, channels, intention);
 
   const finish = () => {
@@ -262,7 +266,7 @@ export function PlanRitual() {
               <ul className="ritual-list">
                 {parked.map((t) => (
                   <Row key={t.id} task={t}>
-                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, today)}>
+                    <button type="button" className="btn btn-quiet" onClick={() => useStore.getState().bringBack(t.id, today)}>
                       Bring back to today
                     </button>
                   </Row>
@@ -271,7 +275,7 @@ export function PlanRitual() {
             </div>
           )}
           {leftovers.length === 0 ? (
-            <p className="lede">Clean slate. Nothing was carried over from earlier days.</p>
+            <p className="lede">{parked.length > 0 ? 'Nothing else was carried over.' : 'Clean slate. Nothing was carried over from earlier days.'}</p>
           ) : (
             <>
               <p className="lede">These did not get done. Decide on each one before adding anything new.</p>
@@ -316,7 +320,14 @@ export function PlanRitual() {
           <div className="ritual-cols">
             <div>
               <h4>Today ({open.length})</h4>
-              <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => addFromText(t, today, true)}
+              <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => {
+                  // New work goes above the leftovers, in the order it is typed.
+                  const id = addFromText(t, today, true);
+                  if (id) {
+                    useStore.getState().moveTask(id, today, added.current);
+                    added.current += 1;
+                  }
+                }}
         quick />
               <ul className="ritual-list">
                 {open.map((t) => (
@@ -381,12 +392,12 @@ export function PlanRitual() {
                   : `It fits, with ${fmtMin(-over)} to spare.`}
               {missing > 0 && ` ${missing} task${missing === 1 ? ' has' : 's have'} no estimate yet.`}
             </p>
-            {pace !== null && Math.abs(estimated - open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t) * pace(t), 0)) >= 10 && (
+            {pace !== null && Math.abs(estimated - atRealPace) >= 10 && (
               <label className="check-row fit-forecast">
                 <input type="checkbox" checked={atPace} onChange={(e) => setAtPace(e.target.checked)} />
                 <span>
                   Plan at my real pace. Your estimates add up to {fmtMin(estimated)}; going by your tracked time this is closer to{' '}
-                  <strong>{fmtMin(open.filter((t) => !t.fixed).reduce((sum, t) => sum + remainingOf(t) * pace(t), 0))}</strong>, and the timeline books that.
+                  <strong>{fmtMin(atRealPace)}</strong>, and the timeline books that.
                 </span>
               </label>
             )}
@@ -423,17 +434,6 @@ export function PlanRitual() {
             <input type="checkbox" checked={fill} onChange={(e) => setFill(e.target.checked)} />
             Put the tasks on my timeline from {fmtClock(from)}, around meetings{breaks.length > 0 ? ' and lunch' : ''}
           </label>
-          {splitAt !== null && splitAt >= 15 && top && (
-            <div className="wont-fit">
-              <p>
-                "{top.title}" is at the top of your list, but no free stretch before {fmtClock(preview[top.id]!)} is long enough for all of it.
-                Split it, and the first {fmtMin(splitAt)} can start at {fmtClock(gap!.start)}.
-              </p>
-              <button type="button" className="btn" onClick={() => useStore.getState().splitTask(top.id, splitAt)}>
-                Split it in two
-              </button>
-            </div>
-          )}
           {wontFit.length > 0 && (
             <div className="wont-fit">
               <p className="row wrap wont-fit-head">
