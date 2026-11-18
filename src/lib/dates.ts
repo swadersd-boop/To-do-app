@@ -57,3 +57,10 @@ export function relativeDay(iso: ISODate, today: ISODate): string {
   if (d === -1) return 'Yesterday';
   return weekdayName(iso);
 }
+
+/** The next day work can land on: tomorrow, or Monday after a Friday unless weekends count. */
+export function nextWorkday(iso: ISODate, weekends = false): ISODate {
+  let next = addDays(iso, 1);
+  while (!weekends && isWeekend(next)) next = addDays(next, 1);
+  return next;
+}

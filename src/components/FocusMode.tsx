@@ -23,7 +23,8 @@ export function FocusMode() {
     [tasks, task?.date, today, id, nowMin],
   );
   // The next thing to work on skips meetings that have not started; the next meeting is mentioned separately.
-  const next = queue.find((t) => !(t.fixed && t.start !== null && t.start > nowMin + 5));
+  // Meetings are never something to focus on; the next one is mentioned below.
+  const next = queue.find((t) => !t.fixed);
   const meeting = queue.find((t) => t.fixed && t.start !== null && t.start > nowMin + 5);
   const { seconds, running } = useTracked(task?.id ?? '', task?.actualSec ?? 0);
 

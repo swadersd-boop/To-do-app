@@ -5,10 +5,10 @@ import type { ISODate } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText } from '../actions';
-import { needOf, occursOn, tasksOn } from '../lib/model';
+import { occursOn, tasksOn } from '../lib/model';
 import { isWeekend, relativeDay, shortDate, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { fixedTotal, paceOf, trackedOn } from '../lib/stats';
+import { fixedTotal, paceOf, trackedOn, workDone, workLeft } from '../lib/stats';
 import { AddLine, LoadBar } from './bits';
 import { GhostCard, TaskCard } from './TaskCard';
 
@@ -38,7 +38,9 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const open = list.filter((t) => !t.done);
   const upcoming = [...open, ...ghosts];
   // What the day's open to-dos still need, measured like the plan: estimate minus time done, at your pace.
-  const planned = upcoming.filter((t) => !t.fixed).reduce((sum, t) => sum + needOf(t, pace), 0);
+  const left = workLeft(upcoming, pace);
+  const worked = isToday ? workDone(list) : 0;
+  const planned = left + worked;
   const fixed = fixedTotal(upcoming);
   const doneCount = list.filter((t) => t.done && !t.fixed).length;
   const tracked = trackedOn(list, log);
@@ -77,10 +79,12 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
                 ? 'Not planned'
                 : `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} tracked` : ''}`
               : over > 0
-                ? `${fmtMin(planned)} of work, ${fmtMin(over)} over`
-                : `${fmtMin(planned)} of ${fmtMin(capacity)}`}
+                ? `${fmtMin(left)} left, ${fmtMin(over)} more than fits`
+                : worked >= 1
+                  ? `${fmtMin(left)} left · ${fmtMin(worked)} done of ${fmtMin(capacity)}`
+                  : `${fmtMin(left)} of ${fmtMin(capacity)}`}
           {!isPast && fixed > 0 && ` · ${fmtMin(fixed)} fixed`}
-          {!isPast && doneCount > 0 && ` · ${doneCount} done`}
+          {!isPast && doneCount > 0 && worked < 1 && ` · ${doneCount} done`}
           {isPast && (log?.carried ?? 0) > 0 && ` · ${log!.carried} moved on`}
         </span>
       </div>

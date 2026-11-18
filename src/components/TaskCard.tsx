@@ -6,6 +6,7 @@ import { useStore } from '../store';
 import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
 import { fmtMin } from '../lib/time';
+import { todaySec } from '../lib/stats';
 import { fmtClock } from '../lib/time';
 import { ChannelPill, CheckCircle, EstimateChip, useTracked } from './bits';
 
@@ -17,6 +18,8 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
   const stopTimer = useStore((s) => s.stopTimer);
   const focusOn = useUI((s) => s.focusOn);
   const { seconds, running } = useTracked(task.id, task.actualSec);
+  // On a past day, the card shows the time worked on that day, not on the task in all.
+  const isPastDay = useUI((s) => task.date !== null && task.date < s.today);
   const subDone = task.subtasks.filter((s) => s.done).length;
 
   return (
@@ -78,7 +81,7 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
           </span>
         )}
         <span className="spacer" />
-        <EstimateChip value={task.planned} onChange={(planned) => updateTask(task.id, { planned })} actualMin={seconds / 60} />
+        <EstimateChip value={task.planned} onChange={(planned) => updateTask(task.id, { planned })} actualMin={(isPastDay ? todaySec(task) : seconds) / 60} />
       </div>
     </div>
   );

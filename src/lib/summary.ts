@@ -1,7 +1,7 @@
 import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
 import { fmtClock, fmtMin } from './time';
-import { plannedTotal, todaySec, trackedOn } from './stats';
+import { plannedTotal, todaySec, trackedOn, workLeft } from './stats';
 
 const tag = (t: Task, channels: Channel[]) => {
   const c = channels.find((x) => x.id === t.channelId);
@@ -17,7 +17,7 @@ function size(t: Task): string {
 }
 
 /** The morning plan as plain text, ready to paste into a chat. */
-export function planText(date: ISODate, tasks: Task[], channels: Channel[], intention: string): string {
+export function planText(date: ISODate, tasks: Task[], channels: Channel[], intention: string, pace?: (t: Task) => number): string {
   const lines = [`Plan for ${longDate(date)}`];
   if (intention.trim()) lines.push(`Focus: ${intention.trim()}`);
   lines.push('');
@@ -25,8 +25,10 @@ export function planText(date: ISODate, tasks: Task[], channels: Channel[], inte
     lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${size(t)}${tag(t, channels)}`),
   );
   if (tasks.length === 0) lines.push('Nothing planned yet.');
-  const total = plannedTotal(tasks);
-  if (total > 0) lines.push('', `Total: ${fmtMin(total)}`);
+  // The same measure as the plan: what the to-dos still need, with meetings listed apart.
+  const work = workLeft(tasks, pace);
+  const meetings = plannedTotal(tasks.filter((t) => t.fixed));
+  if (work + meetings > 0) lines.push('', [work > 0 ? `Work: ${fmtMin(work)}` : '', meetings > 0 ? `Meetings: ${fmtMin(meetings)}` : ''].filter(Boolean).join(' · '));
   return lines.join('\n');
 }
 
@@ -52,8 +54,8 @@ export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], 
   }
   if (tasks.length === 0) lines.push('Nothing was planned today.');
   const actual = trackedOn(tasks);
-  const work = tasks.filter((t) => !t.fixed);
-  if (actual >= 1) lines.push('', `Tracked ${fmtMin(actual)} against ${fmtMin(plannedTotal(work))} of work planned.`);
+  const undone = workLeft(tasks);
+  if (actual >= 1 || undone > 0) lines.push('', [actual >= 1 ? `Worked ${fmtMin(actual)}.` : '', undone > 0 ? `${fmtMin(undone)} of work left undone.` : ''].filter(Boolean).join(' '));
   if (reflection.trim()) lines.push('', `Reflection: ${reflection.trim()}`);
   return lines.join('\n');
 }

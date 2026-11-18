@@ -239,7 +239,7 @@ describe('store', () => {
     expect(find(id).date).toBe(saturday);
   });
 
-  it('gives a task started just before a replan a block that matches its slot', () => {
+  it('plans from the next five minutes and lets the next task follow straight on', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 10, 16, 11, 31));
     const day = todayISO();
@@ -248,10 +248,10 @@ describe('store', () => {
     store().updateTask(id, { actualSec: 20 * 60 });
     const next = store().addTask({ title: 'Emails', date: day, planned: 30 });
     store().autoSchedule(day, 11 * 60 + 31);
-    // Under way since 11:40: it keeps that start and runs to 11:45 plus the 40 minutes it still needs.
-    expect(find(id)).toMatchObject({ start: 700, blockMin: 45 });
-    // The next task starts on the following quarter hour.
-    expect(find(next).start).toBe(750);
+    // Planning starts at 11:35, before the 11:40 start, so nothing is under way yet:
+    // the 40 minutes still needed start at 11:35 and the next task follows straight on.
+    expect(find(id)).toMatchObject({ start: 695, blockMin: 40 });
+    expect(find(next).start).toBe(735);
   });
 
   it('keeps the work done on a task that moves on in that day\'s record', () => {
@@ -329,6 +329,23 @@ describe('store', () => {
     expect(find(id)).toMatchObject({ done: true, unconfirmed: true });
     expect(find(same)).toMatchObject({ done: true });
     expect(find(same).unconfirmed).toBeFalsy();
+  });
+
+  it('charges capacity with the time actually worked today, not the estimates of finished tasks', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 17, 10, 20));
+    const day = todayISO();
+    store().setSettings({ capacityMin: 180, lunchStart: null, planAtPace: false });
+    // Finished this morning after 33 minutes; the rest of its time was worked yesterday.
+    const onboarding = store().addTask({ title: 'Design onboarding', date: day, planned: 120 });
+    store().updateTask(onboarding, { actualSec: 128 * 60, trackedBefore: 95 * 60, done: true });
+    // Finished without the timer: its estimate counts as the work it took.
+    const blog = store().addTask({ title: 'Blog post', date: day, planned: 60 });
+    store().updateTask(blog, { done: true });
+    const offsite = store().addTask({ title: 'Plan team offsite', date: day, planned: 60 });
+    const result = store().autoSchedule(day, 620);
+    expect(result.left).toEqual([]);
+    expect(find(offsite).start).toBe(620);
   });
 
   it('removes only the example tasks', () => {

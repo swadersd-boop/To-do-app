@@ -2,7 +2,7 @@ import type { ISODate } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
 import { parseQuickAdd } from './lib/parse';
-import { addDays, relativeDay } from './lib/dates';
+import { nextWorkday, relativeDay } from './lib/dates';
 
 /** Creates a task from one typed line. Returns its id, or null for an empty title. */
 export function addFromText(text: string, fallbackDate: ISODate | null, atTop = false): string | null {
@@ -58,7 +58,7 @@ export function moveToTomorrow(ids: string[], prefix = ''): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
-  const parked = ids.filter((id) => store.defer(id, addDays(today, 1)) === 'backlog');
+  const parked = ids.filter((id) => store.defer(id, nextWorkday(today, Boolean(store.settings.weekendRollover))) === 'backlog');
   const moved = ids.filter((id) => !parked.includes(id));
   const titles = (list: string[]) => nameTasks(before.filter((t) => list.includes(t.id)));
   const message = [
@@ -76,7 +76,7 @@ export function deferOne(id: string): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
-  if (store.defer(id, addDays(today, 1)) === 'backlog') {
+  if (store.defer(id, nextWorkday(today, Boolean(store.settings.weekendRollover))) === 'backlog') {
     const title = before.find((t) => t.id === id)?.title ?? 'The task';
     notify(`"${title}" went to the backlog after moving on too often.`, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
   }

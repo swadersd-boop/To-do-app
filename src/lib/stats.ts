@@ -1,4 +1,5 @@
 import { addDays } from './dates';
+import { needOf } from './model';
 import type { Task } from '../types';
 
 export interface Honesty {
@@ -112,4 +113,25 @@ export function paceOf(history: Task[]): ((t: Task) => number) | null {
   if (!h.overall) return null;
   const clampPace = (r: number) => Math.min(2, Math.max(0.5, r));
   return (t: Task) => clampPace((t.channelId && h.byChannel[t.channelId]?.ratio) || h.overall!.ratio);
+}
+
+/**
+ * Minutes of work done on a day's to-dos: the time tracked on that day, or,
+ * for a task finished without the timer, what was left of its estimate.
+ * Meetings are not counted.
+ */
+export function workDone(day: Task[]): number {
+  return day
+    .filter((t) => !t.fixed)
+    .reduce((sum, t) => {
+      const tracked = todaySec(t) / 60;
+      if (tracked >= 1) return sum + tracked;
+      // Finished without the timer: count the part of the estimate not already worked on earlier days.
+      return sum + (t.done ? Math.max(0, (t.planned ?? 0) - (t.trackedBefore ?? 0) / 60) : 0);
+    }, 0);
+}
+
+/** Minutes the open to-dos of a day still need, measured as the plan measures them. */
+export function workLeft(day: Task[], pace?: (t: Task) => number): number {
+  return day.filter((t) => !t.fixed && !t.done).reduce((sum, t) => sum + needOf(t, pace), 0);
 }

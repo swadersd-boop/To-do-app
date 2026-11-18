@@ -4,9 +4,9 @@ import { useStore } from '../store';
 import { useUI } from '../ui';
 import { copyText, deferOne } from '../actions';
 import { tasksOn } from '../lib/model';
-import { addDays, longDate } from '../lib/dates';
+import { addDays, longDate, nextWorkday, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { todaySec, trackedOn, workTotal } from '../lib/stats';
+import { todaySec, trackedOn, workLeft } from '../lib/stats';
 import { fmtClock } from '../lib/time';
 import { shutdownText } from '../lib/summary';
 import { ChannelPill, CheckCircle, Dialog, DurationInput } from './bits';
@@ -32,10 +32,13 @@ export function ShutdownRitual() {
   const done = todays.filter((t) => t.done && !t.fixed);
   const open = todays.filter((t) => !t.done && !t.fixed);
   const ahead = todays.filter((t) => !t.done && t.fixed && t.start !== null);
-  const tomorrow = addDays(today, 1);
+  // Leftovers go to the next working day: Monday after a Friday, unless weekends are on.
+  const weekends = useStore((s) => Boolean(s.settings.weekendRollover));
+  const tomorrow = nextWorkday(today, weekends);
+  const nextDay = tomorrow === addDays(today, 1) ? 'tomorrow' : weekdayName(tomorrow);
   // Unfinished to-dos carry over on their own, so they are part of tomorrow's list too.
   const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done).length + open.length;
-  const planned = workTotal(todays);
+  const left = workLeft(open);
   const actual = trackedOn(todays);
   const summary = shutdownText(today, todays, channels, reflection);
 
@@ -117,8 +120,8 @@ export function ShutdownRitual() {
               <h4>Not done ({open.length})</h4>
               <p className="lede">
                 {open.some((t) => parkLimit !== null && t.rolled >= parkLimit)
-                  ? 'These move to tomorrow on their own, except the ones marked for the backlog. Send anything else that can wait to the backlog too.'
-                  : 'These move to tomorrow on their own. Send anything that can wait to the backlog instead.'}
+                  ? `These move to ${nextDay} on their own, except the ones marked for the backlog. Send anything else that can wait to the backlog too.`
+                  : `These move to ${nextDay} on their own. Send anything that can wait to the backlog instead.`}
               </p>
               <ul className="ritual-list">
                 {open.map((t) => (
@@ -161,8 +164,8 @@ export function ShutdownRitual() {
               <span>done</span>
             </div>
             <div>
-              <strong>{fmtMin(planned)}</strong>
-              <span>of work planned</span>
+              <strong>{fmtMin(left)}</strong>
+              <span>of work left undone</span>
             </div>
             <div>
               <strong>{actual >= 1 ? fmtMin(actual) : 'none'}</strong>
@@ -170,7 +173,7 @@ export function ShutdownRitual() {
             </div>
             <div>
               <strong>{tomorrowCount}</strong>
-              <span>on tomorrow's list</span>
+              <span>on {nextDay === 'tomorrow' ? "tomorrow's" : `${nextDay}'s`} list</span>
             </div>
           </div>
           <label className="stack">

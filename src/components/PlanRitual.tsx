@@ -5,10 +5,10 @@ import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText, copyText, deferOne, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
-import { autoSchedule as planDay, byTime, estimateUsedUp, freeMinutes, needOf, tasksOn } from '../lib/model';
+import { autoSchedule as planDay, byTime, estimateUsedUp, freeMinutes, tasksOn } from '../lib/model';
 import { addDays, longDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
-import { fixedTotal, paceOf, weekSummary } from '../lib/stats';
+import { fixedTotal, paceOf, weekSummary, workDone, workLeft } from '../lib/stats';
 import { planText } from '../lib/summary';
 import { encodePlan } from '../lib/share';
 import { AddLine, ChannelPill, Dialog, EstimateChip, LoadBar } from './bits';
@@ -104,6 +104,7 @@ export function PlanRitual() {
   );
   const objectives = allObjectives.filter((o) => o.weekStart === weekStart(today) && !o.done);
   const stuck = leftovers.filter((t) => t.rolled >= 3);
+  const meetings = byTime(open.filter((t) => t.fixed && t.start !== null));
   // Tasks the rollover sent to the backlog this morning, after moving on too many times.
   const parked = tasks.filter((t) => t.date === null && t.parkedOn === today);
   const [deferRest, setDeferRest] = useState(true);
@@ -116,10 +117,11 @@ export function PlanRitual() {
   const setAtPace = (on: boolean) => useStore.getState().setSettings({ planAtPace: on });
   const usePace = atPace && pace !== null ? pace : undefined;
   // The same measure the timeline uses: what each task still needs, rounded the same way.
-  const todo = open.filter((t) => !t.fixed);
-  const estimated = todo.reduce((sum, t) => sum + needOf(t), 0);
-  const atRealPace = pace ? todo.reduce((sum, t) => sum + needOf(t, pace), 0) : estimated;
+  const estimated = workLeft(open);
+  const atRealPace = pace ? workLeft(open, pace) : estimated;
   const planned = usePace ? atRealPace : estimated;
+  // Work already done today comes off the day's capacity, measured as time actually spent.
+  const doneToday = workDone(todays);
   const fixed = fixedTotal(open);
   const missing = open.filter((t) => t.planned === null).length;
 
@@ -129,14 +131,15 @@ export function PlanRitual() {
   const from = Math.max(nowMin, settings.dayStart * 60);
   const until = settings.dayEnd * 60;
   const breaks = breaksOf(settings);
-  const available = Math.min(settings.capacityMin, freeMinutes(open, from, until, breaks));
-  // Only call it late once there is less time left than a normal day holds.
-  const late = available < settings.capacityMin;
+  const capacityLeft = Math.max(0, settings.capacityMin - doneToday);
+  const clockLeft = freeMinutes(open, from, until, breaks);
+  const available = Math.min(capacityLeft, clockLeft);
+  // Late means the clock, not the work already done, is what limits the rest of the day.
+  const late = clockLeft < capacityLeft;
   const over = planned - available;
 
   // What "Start my day" would do, so nothing is dropped by surprise.
   // The same rule "Start my day" uses: no more work than the day's capacity, and only the time that is left.
-  const doneToday = todays.filter((t) => t.done && !t.fixed).reduce((sum, t) => sum + (t.planned ?? 0), 0);
   const budget = Math.max(0, settings.capacityMin - doneToday);
   const preview = useMemo(() => planDay(open, from, until, breaks, budget, usePace), [open, from, until, breaks, budget, usePace]);
   const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
@@ -144,7 +147,7 @@ export function PlanRitual() {
   const ordered = byTime(
     open.filter((t) => !(deferRest && wontFit.includes(t))).map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)),
   );
-  const summary = planText(today, ordered, channels, intention);
+  const summary = planText(today, ordered, channels, intention, usePace);
 
   const finish = () => {
     setDay(today, { plannedAt: new Date().toISOString(), intention: intention.trim() });
@@ -319,7 +322,12 @@ export function PlanRitual() {
           <h3>What do you want to get done today?</h3>
           <div className="ritual-cols">
             <div>
-              <h4>Today ({open.length})</h4>
+              <h4>Today ({open.filter((t) => !t.fixed).length})</h4>
+              {meetings.length > 0 && (
+                <p className="muted hint">
+                  Meetings, which keep their time: {meetings.map((t) => `${t.title} ${fmtClock(t.start!)}`).join(', ')}
+                </p>
+              )}
               <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => {
                   // New work goes above the leftovers, in the order it is typed.
                   const id = addFromText(t, today, true);
@@ -330,7 +338,7 @@ export function PlanRitual() {
                 }}
         quick />
               <ul className="ritual-list">
-                {open.map((t) => (
+                {open.filter((t) => !t.fixed).map((t) => (
                   <Row key={t.id} task={t}>
                     <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
                       Not today
@@ -359,7 +367,7 @@ export function PlanRitual() {
                       <span className="ritual-row-title">{t.title}</span>
                       <ChannelPill channelId={t.channelId} />
                     </div>
-                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, today)} aria-label={`Add ${t.title} to today`}>
+                    <button type="button" className="btn btn-quiet" onClick={() => useStore.getState().bringBack(t.id, today)} aria-label={`Add ${t.title} to today`}>
                       <Plus size={14} />
                       Today
                     </button>
@@ -404,7 +412,7 @@ export function PlanRitual() {
           </div>
           <p className="muted">The order below is your priority. Kalm schedules from the top, so if the day runs out, the bottom drops off.</p>
           <ul className="ritual-list">
-            {open.map((t, i) => (
+            {open.filter((t) => !t.fixed).map((t, i) => (
               <Row key={t.id} task={t}>
                 {i > 0 && (
                   <button type="button" className="icon-btn" aria-label={`Move ${t.title} to the top`} title="Do this first" onClick={() => moveTask(t.id, today, 0)}>

@@ -115,9 +115,13 @@ function Block({
     if (!gesture) return;
     if (!gesture.moved) {
       if (gesture.mode === 'move') openTask(task.id);
-    } else if (gesture.mode === 'move') updateTask(task.id, { start: gesture.start });
-    // Resizing changes the timebox. The estimate stays as it was, so Insights stays honest.
-    else updateTask(task.id, task.planned === null ? { planned: gesture.length } : { blockMin: gesture.length });
+    } else if (gesture.mode === 'move') {
+      // Moving a split task by hand makes it one block, as long as all its parts together.
+      const total = lengthOf(task) + (task.parts ?? []).reduce((sum, p) => sum + p.length, 0);
+      updateTask(task.id, task.parts?.length ? { start: gesture.start, blockMin: total, parts: null } : { start: gesture.start });
+    }
+    // Resizing changes the timebox, as one block. The estimate stays as it was, so Insights stays honest.
+    else updateTask(task.id, task.planned === null ? { planned: gesture.length, parts: null } : { blockMin: gesture.length, parts: null });
     setGesture(null);
   };
 

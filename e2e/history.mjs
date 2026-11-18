@@ -115,7 +115,7 @@ await monday.getByRole('button', { name: 'Next' }).click();
 await monday.getByRole('button', { name: 'Start my day' }).click();
 await page.locator('.backdrop').waitFor({ state: 'detached' });
 const first = await page.locator('.block:not(.is-part)', { hasText: 'Hiring plan' }).getAttribute('aria-label');
-assert.match(first, /Hiring plan, 08:45 to/, 'the top task starts first thing');
+assert.match(first, /Hiring plan, 08:40 to/, 'the top task starts first thing, at the next five minutes');
 assert.ok((await page.locator('.block.is-part', { hasText: 'Hiring plan (continued)' }).count()) >= 1, 'and continues after the standup');
 
 await browser.close();

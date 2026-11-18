@@ -105,54 +105,61 @@ export interface Placement {
   blocks: Span[];
 }
 
-/** Free stretches between `from` and `until` around `busy`. Each starts on a quarter hour. */
-function gapsAround(busy: Span[], from: number, until: number): Span[] {
-  const gaps: Span[] = [];
-  let cursor = from;
-  for (const slot of [...busy].sort((a, b) => a.start - b.start)) {
-    if (slot.end <= cursor) continue;
-    if (slot.start > cursor) gaps.push({ start: cursor, end: Math.min(slot.start, until) });
-    cursor = Math.max(cursor, Math.ceil(slot.end / 15) * 15);
-    if (cursor >= until) break;
-  }
-  if (cursor < until) gaps.push({ start: cursor, end: until });
-  return gaps.filter((g) => g.end > g.start);
-}
+const ceil5 = (n: number) => Math.ceil(n / 5) * 5;
 
-/** Where `need` minutes go: whole in the first gap that holds them, or for long work split over up to three gaps. */
-function fit(need: number, gaps: Span[]): Span[] | null {
-  if (need < 60) {
-    const gap = gaps.find((g) => g.end - g.start >= need);
-    return gap ? [{ start: gap.start, end: gap.start + need }] : null;
-  }
+/**
+ * Lays `need` minutes out from `from`, pausing for anything in `busy`. Tasks
+ * shorter than an hour stay in one piece; longer ones may continue after an
+ * interruption, in pieces of at least half an hour. Returns the pieces and
+ * where the stream ends, or null when it does not fit before `until`.
+ */
+function flow(need: number, from: number, busy: Span[], until: number): { pieces: Span[]; end: number } | null {
+  const sorted = [...busy].sort((a, b) => a.start - b.start);
   const pieces: Span[] = [];
   let rest = need;
-  for (const g of gaps) {
-    const room = Math.floor((g.end - g.start) / 5) * 5;
-    if (room >= rest) {
-      pieces.push({ start: g.start, end: g.start + rest });
-      return pieces;
+  let at = ceil5(from);
+  while (rest > 0) {
+    // Step past whatever is going on at this moment.
+    for (let moved = true; moved; ) {
+      moved = false;
+      for (const b of sorted) {
+        if (b.start <= at && at < b.end) {
+          at = ceil5(b.end);
+          moved = true;
+        }
+      }
     }
-    // Only the last piece may be shorter than the gap; every piece is at least half an hour.
-    if (pieces.length < 2 && room >= 30) {
+    if (at >= until) return null;
+    const next = Math.min(until, ...sorted.filter((b) => b.start > at).map((b) => b.start));
+    const room = next - at;
+    if (room >= rest) {
+      pieces.push({ start: at, end: at + rest });
+      return { pieces, end: at + rest };
+    }
+    if (need >= 60 && room >= 30) {
+      // Leave at least half an hour for after the interruption.
       const part = rest - room >= 30 ? room : Math.floor((rest - 30) / 5) * 5;
       if (part >= 30) {
-        pieces.push({ start: g.start, end: g.start + part });
+        pieces.push({ start: at, end: at + part });
         rest -= part;
       }
     }
+    if (next >= until) return null;
+    at = next;
   }
-  return null;
+  return { pieces, end: at };
 }
 
 /**
- * Plans the rest of a day. Unfinished flexible tasks are placed in list order,
- * which is the priority: each takes the earliest free time from `from`, and a
- * task of an hour or more continues after a meeting or break in up to three
- * blocks rather than waiting for one gap long enough for all of it. Work under
- * way keeps the block where it was worked, and only what it still needs is
- * planned. Fixed commitments, finished work and `breaks` never move. `budget`
- * caps the minutes of new work placed.
+ * Plans the rest of a day as one stream, in list order, which is the
+ * priority: each task starts where the one before it ended, from `from`.
+ * Meetings, breaks and finished work interrupt the stream and it carries on
+ * after them, so no task lower on the list jumps ahead of a higher one. A
+ * task of an hour or more continues after an interruption; a shorter one
+ * waits until it fits in one piece. Work under way keeps the block where it
+ * was worked and only what it still needs is planned. A task that does not
+ * fit before `until`, or within `budget` minutes of new work, is skipped and
+ * the stream carries on with the next.
  *
  * Returns the blocks for every flexible task, or null when it did not fit.
  */
@@ -164,7 +171,7 @@ export function planDay(
   budget = Number.POSITIVE_INFINITY,
   pace: Pace = () => 1,
 ): Record<string, Placement | null> {
-  const first = Math.ceil(from / 15) * 15;
+  const first = ceil5(from);
   const out: Record<string, Placement | null> = {};
   const busy: Span[] = [...breaks, ...day.filter((t) => t.done || t.fixed).flatMap(blocksOf)];
   // The part already worked stays as a record of where it happened.
@@ -173,22 +180,25 @@ export function planDay(
     busy.push(record);
     out[t.id] = { blocks: [record] };
   }
+  let cursor = first;
   let used = 0;
   for (const t of day) {
     if (t.done || t.fixed) continue;
     const record = out[t.id]?.blocks ?? [];
     const need = needOf(t, pace);
-    const pieces = used + need <= budget ? fit(need, gapsAround(busy, first, until)) : null;
-    if (!pieces) {
+    const placed = used + need <= budget ? flow(need, cursor, busy, until) : null;
+    if (!placed) {
       out[t.id] = record.length > 0 ? { blocks: record } : null;
       continue;
     }
-    busy.push(...pieces);
+    busy.push(...placed.pieces);
     used += need;
+    cursor = placed.end;
     // Work that carries straight on from where it stands is one block, not two.
-    const joined = record.length > 0 && pieces[0].start === record[record.length - 1].end;
+    const last = record[record.length - 1];
+    const joined = last && placed.pieces[0].start === last.end;
     out[t.id] = {
-      blocks: joined ? [...record.slice(0, -1), { start: record[record.length - 1].start, end: pieces[0].end }, ...pieces.slice(1)] : [...record, ...pieces],
+      blocks: joined ? [...record.slice(0, -1), { start: last.start, end: placed.pieces[0].end }, ...placed.pieces.slice(1)] : [...record, ...placed.pieces],
     };
   }
   return out;
@@ -233,7 +243,12 @@ export function freeMinutes(day: Task[], from: number, until: number, breaks: Sp
  */
 export function workQueue(day: Task[], now: number): Task[] {
   const ended = (t: Task) => t.fixed && t.start !== null && t.start + lengthOf(t) <= now;
-  return byTime(day.filter((t) => !t.done && !ended(t)));
+  // A task is placed by its next block that is not over yet; one with only past blocks counts as unscheduled.
+  const nextStart = (t: Task) => blocksOf(t).find((b) => b.end > now)?.start ?? null;
+  const open = day.filter((t) => !t.done && !ended(t));
+  const timed = open.filter((t) => nextStart(t) !== null).sort((a, b) => nextStart(a)! - nextStart(b)! || a.order - b.order);
+  const loose = open.filter((t) => nextStart(t) === null).sort((a, b) => a.order - b.order);
+  return [...timed, ...loose];
 }
 
 /** Tasks with a time by their time, then the rest in list order. */
@@ -243,13 +258,9 @@ export function byTime(tasks: Task[]): Task[] {
   return [...timed, ...loose];
 }
 
-/**
- * What to work on now: the first task in the work queue, skipping
- * commitments that have not started yet. A meeting at 14:00 is not
- * something to focus on at 11:30.
- */
+/** What to work on now: the first task in the work queue that is not a meeting. */
 export function focusTarget(day: Task[], now: number): Task | null {
-  return workQueue(day, now).find((t) => !(t.fixed && t.start !== null && t.start > now + 5)) ?? null;
+  return workQueue(day, now).find((t) => !t.fixed) ?? null;
 }
 
 /** The hours the timeline has to show so that no timebox of the day is cut off. */

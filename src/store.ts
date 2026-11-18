@@ -2,8 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, isWeekend, todayISO, weekStart } from './lib/dates';
-import { paceOf } from './lib/stats';
-import { DEFAULT_BLOCK, byTime, lengthOf, moveTask, nextOccurrence, planDay, rollover, tasksOn, type Pace, type Span } from './lib/model';
+import { paceOf, workDone } from './lib/stats';
+import { DEFAULT_BLOCK, lengthOf, moveTask, nextOccurrence, planDay, rollover, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -382,11 +382,10 @@ export const useStore = create<Store>()(
         // The same rule as the planning ritual: at your measured pace unless that is switched off.
         const pace = givenPace ?? (s.settings.planAtPace !== false ? (paceOf(s.tasks) ?? undefined) : undefined);
         const day = tasksOn(s.tasks, date);
-        // Work already finished today counts against the day's capacity.
-        const doneToday = day.filter((t) => t.done && !t.fixed).reduce((sum, t) => sum + (t.planned ?? 0), 0);
-        const budget = Math.max(0, s.settings.capacityMin - doneToday);
-        // Round to the quarter hour here too, so the store and the scheduler agree on what is under way.
-        const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 15) * 15;
+        // What has been worked today already counts against the day's capacity.
+        const budget = Math.max(0, s.settings.capacityMin - workDone(day));
+        // Round as the scheduler does, so both agree on what is under way.
+        const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 5) * 5;
         const plan = planDay(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace);
         const scheduled = s.tasks.map((t) => {
           const placement = plan[t.id];
@@ -401,9 +400,8 @@ export const useStore = create<Store>()(
             parts: later.length > 0 ? later.map((b) => ({ start: b.start, length: b.end - b.start })) : null,
           };
         });
-        // The list now reads in the order the day will go.
-        const order = new Map(byTime(tasksOn(scheduled, date)).map((t, i) => [t.id, i]));
-        set({ tasks: scheduled.map((t) => (order.has(t.id) ? { ...t, order: order.get(t.id)! } : t)) });
+        // The list keeps the order you set: it is the priority the plan was made from.
+        set({ tasks: scheduled });
         return {
           placed: Object.values(plan).filter((v) => v !== null).length,
           left: day.filter((t) => plan[t.id] === null),

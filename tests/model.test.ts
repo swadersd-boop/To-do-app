@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, estimateUsedUp, needOf, planDay, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
-import { forecast, honesty, paceOf, weekSummary } from '../src/lib/stats';
-import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
+import { estimateUsedUp, needOf, planDay, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
+import { forecast, honesty, paceOf, weekSummary, workDone, workLeft } from '../src/lib/stats';
+import { addDays, diffDays, nextWorkday, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
 import { planText, shutdownText } from '../src/lib/summary';
 
@@ -44,6 +44,12 @@ describe('dates', () => {
     expect(weekStart('2026-11-16')).toBe('2026-11-16');
     expect(weekStart('2026-11-22')).toBe('2026-11-16');
     expect(weekStart('2026-11-23')).toBe('2026-11-23');
+  });
+
+  it('finds the next working day', () => {
+    expect(nextWorkday('2026-11-18')).toBe('2026-11-19');
+    expect(nextWorkday('2026-11-20')).toBe('2026-11-23');
+    expect(nextWorkday('2026-11-20', true)).toBe('2026-11-21');
   });
 
   it('names nearby days', () => {
@@ -121,86 +127,7 @@ describe('rollover', () => {
   });
 });
 
-describe('autoSchedule', () => {
-  it('places tasks in list order around fixed commitments and breaks', () => {
-    const day = [
-      task({ id: 'a', order: 0, planned: 90 }),
-      task({ id: 'meeting', order: 1, planned: 45, start: 585, fixed: true }),
-      task({ id: 'b', order: 2, planned: 25 }),
-      task({ id: 'done', order: 3, planned: 30, done: true, start: 480 }),
-      task({ id: 'c', order: 4 }),
-    ];
-    // The top task starts first and continues after the meeting; the next ones follow it.
-    expect(autoSchedule(day, 550, 19 * 60, [{ start: 720, end: 780 }])).toEqual({ a: 555, b: 690, c: 780 });
-    expect(planDay(day, 550, 19 * 60, [{ start: 720, end: 780 }]).a!.blocks).toEqual([
-      { start: 555, end: 585 },
-      { start: 630, end: 690 },
-    ]);
-  });
-
-  it('leaves out what does not fit before the end of the day', () => {
-    const day = [task({ id: 'big', order: 0, planned: 240 }), task({ id: 'small', order: 1, planned: 30 })];
-    expect(autoSchedule(day, 17 * 60, 19 * 60)).toEqual({ big: null, small: 17 * 60 });
-  });
-
-  it('never overlaps anything it places', () => {
-    const day = Array.from({ length: 8 }, (_, i) => task({ id: `k${i}`, order: i, planned: 10 + i * 13 }));
-    const placed = autoSchedule(day, 8 * 60, 22 * 60);
-    const spans = day.map((t) => [placed[t.id]!, placed[t.id]! + t.planned!]).sort((p, q) => p[0] - q[0]);
-    for (let i = 1; i < spans.length; i += 1) expect(spans[i][0]).toBeGreaterThanOrEqual(spans[i - 1][1]);
-  });
-});
-
 describe('fixed commitments', () => {
-  it('are never moved by scheduling, and flexible tasks flow around them', () => {
-    const day = [
-      task({ id: 'standup', order: 0, planned: 15, start: 570, fixed: true }),
-      task({ id: 'slipped', order: 1, planned: 60, start: 540 }),
-      task({ id: 'ahead', order: 2, planned: 30, start: 900 }),
-      task({ id: 'loose', order: 3, planned: 45 }),
-      task({ id: 'one-on-one', order: 4, planned: 30, start: 840, fixed: true }),
-    ];
-    // It is 11:30: everything flexible is laid out again from now, in list order.
-    expect(autoSchedule(day, 690, 19 * 60)).toEqual({ slipped: 690, ahead: 750, loose: 780 });
-  });
-
-  it('books only the time a half-done task still needs', () => {
-    const deck = task({ id: 'deck', order: 0, planned: 120, actualSec: 104 * 60, start: 540 });
-    expect(needOf(deck)).toBe(20);
-    // The work it already got stays where it happened, and the 20 minutes left are planned from now.
-    expect(planDay([deck], 690, 19 * 60, [{ start: 720, end: 780 }]).deck!.blocks).toEqual([
-      { start: 540, end: 660 },
-      { start: 690, end: 710 },
-    ]);
-    // A half-done task that was planned for later is simply moved with what it still needs.
-    const later = { ...deck, start: 900 };
-    expect(planDay([later], 690, 19 * 60, [{ start: 720, end: 780 }]).deck!.blocks).toEqual([{ start: 690, end: 710 }]);
-  });
-
-  it("stops at the day's capacity even when the clock has room", () => {
-    const day = [task({ id: 'a', order: 0, planned: 240 }), task({ id: 'b', order: 1, planned: 120 }), task({ id: 'c', order: 2, planned: 60 })];
-    expect(autoSchedule(day, 480, 19 * 60, [], 300)).toEqual({ a: 480, b: null, c: 720 });
-  });
-
-  it('when running late, keeps the top priority and drops the bottom of the list', () => {
-    const day = [
-      task({ id: 'proposal', order: 0, planned: 120, start: 540 }),
-      task({ id: 'review', order: 1, planned: 60, start: 660 }),
-      task({ id: 'refactor', order: 2, planned: 180, start: 1080 }),
-      task({ id: 'one-on-one', order: 3, planned: 30, start: 840, fixed: true }),
-    ];
-    const plan = planDay(day, 690, 18 * 60, [{ start: 720, end: 780 }]);
-    // At 11:30 the proposal takes the very next free time, split around lunch and the one-to-one,
-    // the review follows, and the refactor at the bottom is what no longer fits.
-    expect(plan.proposal!.blocks).toEqual([
-      { start: 690, end: 720 },
-      { start: 780, end: 840 },
-      { start: 870, end: 900 },
-    ]);
-    expect(plan.review!.blocks).toEqual([{ start: 900, end: 960 }]);
-    expect(plan.refactor).toBeNull();
-  });
-
   it('keep their time when moved to another day, and lose it in the backlog', () => {
     const meeting = task({ id: 'm', start: 840, fixed: true });
     expect(moveTask([meeting], 'm', '2026-11-18', 0)[0]).toMatchObject({ date: '2026-11-18', start: 840, fixed: true });
@@ -304,7 +231,8 @@ describe('summaries', () => {
     expect(text).toContain('Focus: Ship it');
     expect(text).toContain('1. Brief (1h 30m) #work');
     expect(text).toContain('2. Emails');
-    expect(text.endsWith('Total: 1h 30m')).toBe(true);
+    // Emails has no estimate, so like the timeline the total books the usual half hour for it.
+    expect(text.endsWith('Work: 2h')).toBe(true);
   });
 
   it('says what is left of a started task, and what was done before today', () => {
@@ -328,7 +256,7 @@ describe('summaries', () => {
     );
     expect(text).toContain('Done (1):\n- Brief: 50m (planned 1h 30m)');
     expect(text).toContain('Not done (1):\n- Emails');
-    expect(text).toContain('Tracked 50m against 2h of work planned.');
+    expect(text).toContain('Worked 50m. 30m of work left undone.');
     expect(text).toContain('Reflection: Good day');
   });
 });
@@ -365,11 +293,17 @@ describe('what to work on now', () => {
     expect(workQueue(day, 690).map((t) => t.id)).toEqual(['proposal', 'one-on-one', 'dinner', 'emails']);
   });
 
-  it('never focuses on a meeting that has not started', () => {
+  it('orders a split task by its next block, not by the part already behind it', () => {
+    const memo = task({ id: 'memo', order: 0, planned: 120, start: 540, parts: [{ start: 800, length: 30 }] });
+    const review = task({ id: 'review', order: 1, planned: 60, start: 700 });
+    expect(workQueue([memo, review], 690).map((t) => t.id)).toEqual(['review', 'memo']);
+  });
+
+  it('never picks a meeting to focus on', () => {
     expect(focusTarget(day, 690)!.id).toBe('proposal');
-    const onlyMeetingsAhead = day.filter((t) => t.id !== 'proposal' && t.id !== 'emails');
-    expect(focusTarget(onlyMeetingsAhead, 690)).toBeNull();
-    expect(focusTarget(onlyMeetingsAhead, 838)!.id).toBe('one-on-one');
+    const onlyMeetings = day.filter((t) => t.fixed || t.done);
+    expect(focusTarget(onlyMeetings, 690)).toBeNull();
+    expect(focusTarget(onlyMeetings, 845)).toBeNull();
   });
 });
 
@@ -381,32 +315,6 @@ describe('freeMinutes', () => {
     expect(freeMinutes([], 1200, 19 * 60)).toBe(0);
   });
 });
-
-describe('replanning keeps worked time in place', () => {
-  it('leaves the worked part where it was and plans what is left after now', () => {
-    // Worked from 13:00, already 2h30m in on a 2h estimate, replanned at 15:30.
-    const memo = task({ id: 'memo', order: 0, planned: 120, start: 780, actualSec: 150 * 60 });
-    const offsite = task({ id: 'offsite', order: 1, planned: 60 });
-    const plan = planDay([memo, offsite], 930, 19 * 60);
-    expect(plan.memo!.blocks).toEqual([
-      { start: 780, end: 900 },
-      { start: 930, end: 945 },
-    ]);
-    expect(plan.offsite!.blocks).toEqual([{ start: 945, end: 1005 }]);
-  });
-
-  it('still moves a task that was planned earlier but never started', () => {
-    const slipped = task({ id: 'slipped', planned: 60, start: 600 });
-    expect(planDay([slipped], 690, 19 * 60).slipped!.blocks).toEqual([{ start: 690, end: 750 }]);
-  });
-
-  it('can plan at the pace history shows', () => {
-    const deep = task({ id: 'deep', planned: 60, channelId: 'deep' });
-    const plan = autoSchedule([deep, task({ id: 'next', order: 1, planned: 30 })], 540, 19 * 60, [], Number.POSITIVE_INFINITY, (t) => (t.channelId === 'deep' ? 1.5 : 1));
-    expect(plan).toEqual({ deep: 540, next: 630 });
-  });
-});
-
 
 describe('weekSummary', () => {
   it('counts each task once and reports what was left at the end of the week', () => {
@@ -437,57 +345,113 @@ describe('paceOf', () => {
   });
 });
 
-describe('planDay', () => {
+describe('planDay: one stream in priority order', () => {
   const lunch = [{ start: 720, end: 780 }];
+  const standup = task({ id: 'standup', order: 0, planned: 15, start: 570, fixed: true });
   const spans = (p: { blocks: { start: number; end: number }[] } | null | undefined) => p?.blocks.map((b) => [b.start, b.end]) ?? null;
 
-  it('gives the top task the morning, continuing after a meeting', () => {
-    const standup = task({ id: 'standup', order: 0, planned: 15, start: 570, fixed: true });
-    const hiring = task({ id: 'hiring', order: 1, planned: 170 });
+  it('lays tasks out one after another in list order, pausing for meetings and lunch', () => {
+    const hiring = task({ id: 'hiring', order: 1, planned: 120 });
     const email = task({ id: 'email', order: 2, planned: 30 });
-    const plan = planDay([standup, hiring, email], 520, 19 * 60, lunch);
-    expect(spans(plan.hiring)).toEqual([[525, 570], [585, 710]]);
-    expect(spans(plan.email)).toEqual([[780, 810]]);
+    const review = task({ id: 'review', order: 3, planned: 45 });
+    const plan = planDay([standup, hiring, email, review], 520, 19 * 60, lunch);
+    // 08:40-09:30, standup, 09:45-10:55: two hours. Then the email. The review does not fit
+    // in the 35 minutes before lunch and is too short to split, so it waits for 13:00.
+    expect(spans(plan.hiring)).toEqual([[520, 570], [585, 655]]);
+    expect(spans(plan.email)).toEqual([[655, 685]]);
+    expect(spans(plan.review)).toEqual([[780, 825]]);
   });
 
-  it('keeps the worked part of a paused task where it was and plans the rest from now', () => {
+  it('never lets a lower task jump ahead of a higher one', () => {
+    const deep = task({ id: 'deep', order: 1, planned: 50 });
+    const quick = task({ id: 'quick', order: 2, planned: 20 });
+    const plan = planDay([standup, deep, quick], 525, 19 * 60, lunch);
+    // 45 minutes before the standup are not enough for the 50-minute top task; the quick one does not take them.
+    expect(spans(plan.deep)).toEqual([[585, 635]]);
+    expect(spans(plan.quick)).toEqual([[635, 655]]);
+  });
+
+  it('splits a long task at a meeting into two long blocks, not scraps', () => {
+    const hiring = task({ id: 'hiring', order: 1, planned: 120 });
+    expect(spans(planDay([standup, hiring], 525, 19 * 60, lunch).hiring)).toEqual([[525, 570], [585, 660]]);
+  });
+
+  it('leaves no piece shorter than half an hour', () => {
+    // 20 minutes before the standup are too short a piece; the task starts after it.
+    const hiring = task({ id: 'hiring', order: 1, planned: 120 });
+    expect(spans(planDay([standup, hiring], 550, 19 * 60, lunch).hiring)).toEqual([[585, 705]]);
+    // A tail under half an hour is avoided by ending the first piece earlier.
+    const report = task({ id: 'report', order: 1, planned: 70 });
+    expect(spans(planDay([standup, report], 520, 19 * 60, lunch).report)).toEqual([[520, 560], [585, 615]]);
+  });
+
+  it('starts at the next five minutes, not the next quarter hour', () => {
+    expect(spans(planDay([task({ id: 'a', planned: 30 })], 871, 19 * 60).a)).toEqual([[875, 905]]);
+  });
+
+  it('keeps the worked part of a paused task and plans the rest from now', () => {
     const memo = task({ id: 'memo', planned: 120, start: 585, actualSec: 115 * 60 });
-    const plan = planDay([memo], 910, 19 * 60, lunch);
-    expect(spans(plan.memo)).toEqual([[585, 705], [915, 930]]);
+    expect(spans(planDay([memo], 910, 19 * 60, lunch).memo)).toEqual([[585, 705], [910, 925]]);
   });
 
-  it('gives a task past its estimate a plain quarter hour, without pace', () => {
+  it('joins work that carries straight on from the part already done', () => {
+    const brief = task({ id: 'brief', planned: 60, start: 660, actualSec: 20 * 60 });
+    expect(spans(planDay([brief], 690, 19 * 60).brief)).toEqual([[660, 730]]);
+  });
+
+  it('skips what does not fit and carries on with the next task', () => {
+    const big = task({ id: 'big', order: 0, planned: 300 });
+    const small = task({ id: 'small', order: 1, planned: 60 });
+    const plan = planDay([big, small], 17 * 60, 19 * 60);
+    expect(plan.big).toBeNull();
+    expect(spans(plan.small)).toEqual([[1020, 1080]]);
+  });
+
+  it('stops at the budget, and plans at the given pace', () => {
+    expect(planDay([task({ id: 'x', planned: 60 })], 540, 19 * 60, [], 30).x).toBeNull();
+    const deep = task({ id: 'deep', order: 0, planned: 60, channelId: 'deep' });
+    const next = task({ id: 'next', order: 1, planned: 30 });
+    const plan = planDay([deep, next], 540, 19 * 60, [], Number.POSITIVE_INFINITY, (t) => (t.channelId === 'deep' ? 1.5 : 1));
+    expect(spans(plan.deep)).toEqual([[540, 630]]);
+    expect(spans(plan.next)).toEqual([[630, 660]]);
+  });
+
+  it('works around finished work and never moves fixed commitments', () => {
+    const done = task({ id: 'done', order: 0, planned: 30, start: 540, done: true });
+    const later = task({ id: 'later', order: 1, planned: 30 });
+    const plan = planDay([done, standup, later], 540, 19 * 60);
+    expect(plan.done).toBeUndefined();
+    expect(plan.standup).toBeUndefined();
+    // Finished work holds 09:00-09:30 and the standup 09:30-09:45, so the task starts at 09:45.
+    expect(spans(plan.later)).toEqual([[585, 615]]);
+  });
+
+  it('gives a task past its estimate a plain quarter hour', () => {
     const over = task({ id: 'over', planned: 60, actualSec: 70 * 60 });
     expect(needOf(over, () => 1.5)).toBe(15);
     expect(estimateUsedUp(over)).toBe(true);
-    expect(needOf(task({ planned: 60 }), () => 1.5)).toBe(90);
   });
+});
 
-  it('never splits a short task', () => {
-    const meeting = task({ id: 'm', start: 560, planned: 60, fixed: true });
-    const short = task({ id: 'short', order: 1, planned: 45 });
-    // The meeting ends at 10:20 and blocks start on the quarter hour, so the short task waits for 10:30 rather than splitting.
-    expect(spans(planDay([meeting, short], 525, 19 * 60).short)).toEqual([[630, 675]]);
-  });
-
-  it('cuts a task into at most three pieces, each at least half an hour', () => {
+describe('work done and work left', () => {
+  it('counts time worked today, or the estimate of a task finished without the timer', () => {
     const day = [
-      task({ id: 'a', start: 570, planned: 30, fixed: true }),
-      task({ id: 'b', start: 645, planned: 30, fixed: true }),
-      task({ id: 'c', start: 720, planned: 30, fixed: true }),
-      task({ id: 'long', order: 9, planned: 240 }),
+      task({ planned: 120, actualSec: 128 * 60, trackedBefore: 95 * 60, done: true }),
+      task({ planned: 60, done: true }),
+      task({ planned: 60, actualSec: 20 * 60 }),
+      task({ planned: 30, start: 570, fixed: true, done: true }),
     ];
-    const plan = planDay(day, 525, 19 * 60);
-    expect(plan.long!.blocks.length).toBeLessThanOrEqual(3);
-    expect(plan.long!.blocks.every((b) => b.end - b.start >= 30)).toBe(true);
-    expect(plan.long!.blocks.reduce((sum, b) => sum + b.end - b.start, 0)).toBe(240);
+    expect(workDone(day)).toBe(33 + 60 + 20);
   });
 
-  it('leaves out what does not fit in full, and respects the budget', () => {
-    const day = [task({ id: 'big', planned: 300 }), task({ id: 'small', order: 1, planned: 60 })];
-    const plan = planDay(day, 17 * 60, 19 * 60);
-    expect(plan.big).toBeNull();
-    expect(spans(plan.small)).toEqual([[1020, 1080]]);
-    expect(planDay([task({ id: 'x', planned: 60 })], 540, 19 * 60, [], 30).x).toBeNull();
+  it('counts only what was left of a task finished today without the timer', () => {
+    // 25 minutes were worked on an earlier day; finishing it today accounts for the other 1h 35m.
+    expect(workDone([task({ planned: 120, actualSec: 25 * 60, trackedBefore: 25 * 60, done: true })])).toBe(95);
+  });
+
+  it('counts what open to-dos still need, at the given pace', () => {
+    const day = [task({ planned: 60, actualSec: 20 * 60 }), task({ planned: 30, channelId: 'deep' }), task({ planned: 30, done: true }), task({ planned: 15, fixed: true })];
+    expect(workLeft(day)).toBe(40 + 30);
+    expect(workLeft(day, (t) => (t.channelId === 'deep' ? 2 : 1))).toBe(40 + 60);
   });
 });
