@@ -65,7 +65,8 @@ const weeks = (await page.locator('.table').nth(1).innerText()).split('\n');
 assert.ok(weeks.some((row) => /^9 Nov\t28\t/.test(row)), `week of 9 Nov: ${weeks.join(' | ')}`);
 await page.keyboard.press('Escape');
 
-// 6. Three days later the leftovers have moved on four times, and the plan suggests the backlog.
+// 6. Three days later the two leftovers have moved on three times, so they go to the backlog by themselves,
+//    and the plan says so with a way to bring them back.
 let state = await ctx.storageState();
 await ctx.close();
 for (const day of ['17', '18', '19']) {
@@ -74,13 +75,22 @@ for (const day of ['17', '18', '19']) {
   await ctx.close();
 }
 ({ ctx, page } = await open('2026-11-19T08:35:00+01:00', state));
-assert.equal((await titles(page.locator('.col.is-today .card-wrap'))).filter((t) => t === 'Standup').length, 1, 'still one standup on Thursday');
+const thursday = await titles(page.locator('.col.is-today .card-wrap'));
+assert.deepEqual(thursday, ['Standup'], 'only the standup is on Thursday');
+assert.equal(await page.locator('.sidebar .col-list .card-wrap').count(), 3, 'the two leftovers joined the backlog item');
 await page.getByRole('button', { name: 'Plan today', exact: true }).click();
 const dlg = page.getByRole('dialog');
 await dlg.getByRole('button', { name: 'Next' }).click();
-assert.match(await dlg.locator('.ritual-list').first().innerText(), /moved on 4 times/);
-await dlg.getByRole('button', { name: 'Send them to the backlog' }).click();
-assert.equal(await page.locator('.sidebar .col-list .card-wrap').count(), 3, 'two leftovers joined the backlog item');
+assert.match(await dlg.locator('.wont-fit').first().innerText(), /went to the backlog overnight/);
+await dlg.getByRole('button', { name: 'Bring back to today' }).first().click();
+assert.equal((await titles(page.locator('.col.is-today .card-wrap'))).length, 2, 'one brought back to today');
+
+// 7. A day nobody planned says so, and still names what moved on from it.
+await page.keyboard.press('Escape');
+const wednesday = page.locator('.col[data-date="2026-11-18"]');
+await page.getByRole('button', { name: 'Earlier' }).click();
+assert.equal(await wednesday.locator('.col-load-text').innerText(), 'Not planned · 2 moved on');
+assert.equal(await wednesday.locator('.card-moved').count(), 2);
 
 await browser.close();
 assert.deepEqual(errors, [], 'no page errors');

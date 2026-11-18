@@ -51,6 +51,8 @@ export interface Task {
   blockMin?: number | null;
   /** Seconds tracked on earlier days, before the task was carried over to this one. */
   trackedBefore?: number;
+  /** The day the task was moved to the backlog by itself, after moving on too many times. */
+  parkedOn?: ISODate | null;
 }
 
 export interface Channel {
@@ -79,6 +81,8 @@ export interface DayLog {
   carriedSec?: number;
   /** Titles of the tasks this day carried over, so the day still shows what was planned. */
   carriedTitles?: string[];
+  /** Work done this day on tasks that then moved on: where it sat on the timeline and for how long. */
+  carriedWork?: { title: string; start: number | null; sec: number }[];
 }
 
 export interface Settings {
@@ -90,6 +94,8 @@ export interface Settings {
   dayEnd: number;
   theme: 'system' | 'light' | 'dark';
   autoRollover: boolean;
+  /** After this many moves an unfinished task goes to the backlog instead. `null` never; unset means 3. */
+  parkAfter?: number | null;
   /** Carry unfinished tasks over on Saturdays and Sundays too. Off: they wait for Monday. */
   weekendRollover?: boolean;
   /** Book time at the pace history shows instead of at the raw estimates. On unless switched off. */

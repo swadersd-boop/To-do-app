@@ -61,26 +61,30 @@ export function moveTask(tasks: Task[], id: string, date: ISODate | null, index:
 }
 
 /**
- * Carries unfinished tasks from past days over to today. They go to the top
- * of today's list, oldest first. Fixed commitments stay on their own day: a
- * missed meeting is not something to do tomorrow. Returns the same array when
- * nothing moved.
+ * Carries unfinished tasks from past days over to today, after whatever is
+ * already planned for today, oldest first. Fixed commitments stay on their own
+ * day: a missed meeting is not something to do tomorrow. A task that has
+ * already moved on `parkAfter` times goes to the backlog instead, so stale work
+ * cannot pile up. Returns the same array when nothing moved.
  */
-export function rollover(tasks: Task[], today: ISODate): Task[] {
+export function rollover(tasks: Task[], today: ISODate, parkAfter: number | null = null): Task[] {
   const stale = tasks
     .filter((t) => t.date !== null && t.date < today && !t.done && !t.fixed)
     .sort((a, b) => (a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : a.order - b.order));
   if (stale.length === 0) return tasks;
+  const parks = (t: Task) => parkAfter !== null && t.rolled >= parkAfter;
+  const toToday = stale.filter((t) => !parks(t));
+  const toBacklog = stale.filter(parks);
+  const onToday = tasksOn(tasks, today).length;
+  const inBacklog = tasksOn(tasks, null).length;
   const order = new Map<string, number>();
-  stale.forEach((t, i) => order.set(t.id, i));
-  tasksOn(tasks, today).forEach((t, i) => order.set(t.id, stale.length + i));
-  const moved = new Set(stale.map((t) => t.id));
+  toToday.forEach((t, i) => order.set(t.id, onToday + i));
+  toBacklog.forEach((t, i) => order.set(t.id, inBacklog + i));
   return tasks.map((t) => {
     const next = order.get(t.id);
     if (next === undefined) return t;
-    return moved.has(t.id)
-      ? { ...t, date: today, order: next, start: null, blockMin: null, rolled: t.rolled + 1, trackedBefore: t.actualSec }
-      : { ...t, order: next };
+    const moved = { ...t, order: next, start: null, blockMin: null, rolled: t.rolled + 1, trackedBefore: t.actualSec };
+    return parks(t) ? { ...moved, date: null, parkedOn: today } : { ...moved, date: today };
   });
 }
 
@@ -148,6 +152,28 @@ export function autoSchedule(
     used += length;
   }
   return placed;
+}
+
+/**
+ * Every stretch of at least `minLength` minutes between `from` and `until` that
+ * is free of fixed commitments, finished work and breaks. Flexible plans do not
+ * count, since they can move.
+ */
+export function freeGaps(day: Task[], from: number, until: number, breaks: Span[] = [], minLength = 30): { start: number; length: number }[] {
+  const busy = [
+    ...breaks,
+    ...day.filter((t) => t.start !== null && (t.fixed || t.done)).map((t) => ({ start: t.start!, end: t.start! + lengthOf(t) })),
+  ].sort((a, b) => a.start - b.start);
+  const gaps: { start: number; length: number }[] = [];
+  let cursor = Math.ceil(from / 15) * 15;
+  for (const slot of [...busy, { start: until, end: until }]) {
+    if (slot.end <= cursor) continue;
+    const end = Math.min(slot.start, until);
+    if (end - cursor >= minLength) gaps.push({ start: cursor, length: end - cursor });
+    cursor = Math.max(cursor, Math.ceil(slot.end / 15) * 15);
+    if (cursor >= until) break;
+  }
+  return gaps;
 }
 
 /** Minutes left for flexible work between `from` and `until`, after fixed commitments and breaks. */

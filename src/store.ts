@@ -104,6 +104,12 @@ interface Actions {
   moveTask: (id: string, date: ISODate | null, index: number) => void;
   /** Moves a task to the end of a day or the backlog. */
   sendTo: (id: string, date: ISODate | null) => void;
+  /**
+   * Puts an unfinished task off to a later day. Counts as moving on, like an
+   * overnight carry-over, and parks it in the backlog past the same limit.
+   * Returns where it went.
+   */
+  defer: (id: string, date: ISODate) => 'day' | 'backlog';
   rollover: (today: ISODate) => void;
   /** Replans the flexible tasks of a day. Returns how many got a time and which did not fit. */
   autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[] };
@@ -130,6 +136,8 @@ interface Actions {
   /** Removes an objective and unlinks its tasks. Returns what is needed to undo it. */
   deleteObjective: (id: string) => { objective: Objective; linked: string[] } | null;
   restoreObjective: (objective: Objective, linked: string[]) => void;
+  /** Splits a task so its first part needs `firstMin` more minutes. Returns the new second part's id. */
+  splitTask: (id: string, firstMin: number) => string | null;
 
   setDay: (date: ISODate, patch: DayLog) => void;
   setSettings: (patch: Partial<Settings>) => void;
@@ -318,11 +326,24 @@ export const useStore = create<Store>()(
 
       sendTo: (id, date) => set((s) => ({ tasks: moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER) })),
 
+      defer: (id, date) => {
+        const s = get();
+        const task = s.tasks.find((t) => t.id === id);
+        const limit = s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter;
+        const parks = Boolean(task) && limit !== null && task!.rolled >= limit;
+        set({
+          tasks: moveTask(s.tasks, id, parks ? null : date, Number.MAX_SAFE_INTEGER).map((t) =>
+            t.id === id ? { ...t, rolled: t.rolled + 1, parkedOn: parks ? date : t.parkedOn } : t,
+          ),
+        });
+        return parks ? 'backlog' : 'day';
+      },
+
       rollover: (today) =>
         set((s) => {
           // Work left on Friday waits for Monday rather than filling the weekend.
           if (isWeekend(today) && !s.settings.weekendRollover) return s;
-          const tasks = rollover(s.tasks, today);
+          const tasks = rollover(s.tasks, today, s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter);
           if (tasks === s.tasks) return s;
           // Note on each day what left it unfinished, so the record of that day stays honest.
           const days = { ...s.days };
@@ -330,6 +351,7 @@ export const useStore = create<Store>()(
             const after = tasks.find((t) => t.id === before.id);
             if (!before.date || !after || after.date === before.date) continue;
             const log = days[before.date] ?? {};
+            const workedSec = before.actualSec - (before.trackedBefore ?? 0);
             days[before.date] = {
               ...log,
               carried: (log.carried ?? 0) + 1,
@@ -337,6 +359,7 @@ export const useStore = create<Store>()(
               // The time worked that day stays with that day.
               carriedSec: (log.carriedSec ?? 0) + before.actualSec - (before.trackedBefore ?? 0),
               carriedTitles: [...(log.carriedTitles ?? []), before.title],
+              carriedWork: workedSec >= 60 ? [...(log.carriedWork ?? []), { title: before.title, start: before.start, sec: workedSec }] : log.carriedWork,
             };
           }
           return { tasks, days };
@@ -451,6 +474,30 @@ export const useStore = create<Store>()(
           tasks: s.tasks.map((t) => (t.objectiveId === id ? { ...t, objectiveId: null } : t)),
         }));
         return { objective, linked };
+      },
+
+      splitTask: (id, firstMin) => {
+        const task = get().tasks.find((t) => t.id === id);
+        if (!task || task.planned === null) return null;
+        const spentMin = Math.round(task.actualSec / 60);
+        const rest = task.planned - spentMin - firstMin;
+        if (rest < 5 || firstMin < 5) return null;
+        const base = task.title.replace(/ \(part 1\)$/, '');
+        const second: Task = {
+          ...makeTask({ title: `${base} (part 2)`, date: task.date, planned: rest, channelId: task.channelId, notes: task.notes }, task.order + 1),
+          objectiveId: task.objectiveId,
+        };
+        set((s) => ({
+          tasks: [
+            ...s.tasks.map((t) => {
+              if (t.id === id) return { ...t, title: `${base} (part 1)`, planned: spentMin + firstMin, blockMin: null };
+              // Make room right after the first part.
+              return t.date === task.date && t.order > task.order ? { ...t, order: t.order + 1 } : t;
+            }),
+            second,
+          ],
+        }));
+        return second.id;
       },
 
       restoreObjective: (objective, linked) =>

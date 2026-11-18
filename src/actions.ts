@@ -54,10 +54,30 @@ export function nameTasks(tasks: { title: string }[]): string {
 }
 
 /** Sends tasks that did not fit to tomorrow, with an undo. */
-export function moveToTomorrow(ids: string[]): void {
+export function moveToTomorrow(ids: string[], prefix = ''): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
-  for (const id of ids) store.sendTo(id, addDays(today, 1));
-  notify(`Moved ${ids.length} task${ids.length === 1 ? '' : 's'} to tomorrow`, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
+  const parked = ids.filter((id) => store.defer(id, addDays(today, 1)) === 'backlog');
+  const moved = ids.filter((id) => !parked.includes(id));
+  const titles = (list: string[]) => nameTasks(before.filter((t) => list.includes(t.id)));
+  const message = [
+    prefix,
+    moved.length > 0 ? `Moved ${titles(moved)} to tomorrow.` : '',
+    parked.length > 0 ? `${titles(parked)} went to the backlog after moving on too often.` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  notify(message, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
+}
+
+/** Puts one task off to tomorrow, and says so if it went to the backlog instead. */
+export function deferOne(id: string): void {
+  const store = useStore.getState();
+  const { today, notify } = useUI.getState();
+  const before = store.tasks;
+  if (store.defer(id, addDays(today, 1)) === 'backlog') {
+    const title = before.find((t) => t.id === id)?.title ?? 'The task';
+    notify(`"${title}" went to the backlog after moving on too often.`, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
+  }
 }

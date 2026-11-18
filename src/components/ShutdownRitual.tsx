@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Copy } from 'lucide-react';
 import { useStore } from '../store';
 import { useUI } from '../ui';
-import { copyText } from '../actions';
+import { copyText, deferOne } from '../actions';
 import { tasksOn } from '../lib/model';
 import { addDays, longDate } from '../lib/dates';
 import { fmtMin } from '../lib/time';
@@ -124,7 +124,7 @@ export function ShutdownRitual() {
                       <ChannelPill channelId={t.channelId} />
                     </div>
                     <div className="row">
-                      <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, tomorrow)}>
+                      <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
                         Tomorrow
                       </button>
                       <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>

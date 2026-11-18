@@ -13,6 +13,7 @@ export function FocusMode() {
   const task = tasks.find((t) => t.id === id);
   const { startTimer, stopTimer, toggleDone, updateTask, updateSubtask, addSubtask } = useStore.getState();
   const panel = useRef<HTMLDivElement>(null);
+  const lastAdvance = useRef(0);
 
   const clock = useNow(30_000);
   const nowMin = new Date(clock).getHours() * 60 + new Date(clock).getMinutes();
@@ -52,6 +53,9 @@ export function FocusMode() {
 
   // Finishing or skipping stops the clock. The next task waits until you press Start.
   const advance = (markDone: boolean) => {
+    // A quick second press (a double click) must not finish the next task too.
+    if (Date.now() - lastAdvance.current < 900) return;
+    lastAdvance.current = Date.now();
     // Finished without ever pressing Start: count the time since it opened here, and say so.
     const openedAt = useUI.getState().focusOpenedAt;
     const since = openedAt ? Date.now() - openedAt : 0;

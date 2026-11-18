@@ -189,6 +189,7 @@ export function Timeline() {
   const today = useUI((s) => s.today);
   const notify = useUI((s) => s.notify);
   const dropAt = useUI((s) => s.dropAt);
+  const log = useStore((s) => s.days[day]);
   const tasks = useStore((s) => s.tasks);
   const autoSchedule = useStore((s) => s.autoSchedule);
   const clearSchedule = useStore((s) => s.clearSchedule);
@@ -204,8 +205,20 @@ export function Timeline() {
   const dayStartMin = dayStart * 60;
   const dayEndMin = dayEnd * 60;
   const boxed = list.filter((t) => t.start !== null);
+  // Work done here on tasks that later moved on to another day, shown where it happened.
+  const traces = useMemo(
+    () =>
+      (day < today ? (log?.carriedWork ?? []) : [])
+        .filter((w) => w.start !== null)
+        .map((w, i) => ({ id: `trace-${i}`, title: w.title, start: w.start!, length: Math.max(STEP, Math.round(w.sec / 60)) })),
+    [log, day, today],
+  );
   const layout = useMemo(
-    () => layoutBlocks(boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) }))),
+    () =>
+      layoutBlocks([
+        ...boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) })),
+        ...traces.map((w) => ({ id: w.id, start: w.start, end: w.start + w.length })),
+      ]),
     [boxed],
   );
   const hours = Array.from({ length: dayEnd - dayStart }, (_, i) => dayStart + i);
@@ -297,6 +310,27 @@ export function Timeline() {
                   Lunch
                 </div>
               ))}
+            {traces.map((w) => {
+              const width = 100 / (layout[w.id]?.cols ?? 1);
+              return (
+                <div
+                  key={w.id}
+                  className="block is-trace"
+                  style={{
+                    top: (w.start - dayStartMin) * PX_PER_MIN,
+                    height: w.length * PX_PER_MIN - 2,
+                    left: `calc(${(layout[w.id]?.col ?? 0) * width}% + 2px)`,
+                    width: `calc(${width}% - 4px)`,
+                  }}
+                  title="Worked on here, then moved on to a later day"
+                >
+                  <span className="block-title">↪ {w.title}</span>
+                  <span className="block-time">
+                    {fmtClock(w.start)} to {fmtClock(w.start + w.length)}, moved on
+                  </span>
+                </div>
+              );
+            })}
             {boxed.map((t) => (
               <Block key={t.id} task={t} col={layout[t.id]?.col ?? 0} cols={layout[t.id]?.cols ?? 1} dayStartMin={dayStartMin} dayEndMin={dayEndMin} />
             ))}

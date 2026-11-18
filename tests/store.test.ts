@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_SESSION_SEC, useStore } from '../src/store';
 import { addDays, todayISO } from '../src/lib/dates';
+import { tasksOn } from '../src/lib/model';
 
 const today = todayISO();
 const yesterday = addDays(today, -1);
@@ -251,6 +252,75 @@ describe('store', () => {
     expect(find(id)).toMatchObject({ start: 700, blockMin: 45 });
     // The next task starts on the following quarter hour.
     expect(find(next).start).toBe(750);
+  });
+
+  it('keeps the work done on a task that moves on in that day\'s record', () => {
+    const id = store().addTask({ title: 'Design onboarding', date: yesterday, planned: 180, start: 780 });
+    store().updateTask(id, { actualSec: 90 * 60 });
+    store().rollover(today);
+    expect(store().days[yesterday].carriedWork).toEqual([{ title: 'Design onboarding', start: 780, sec: 90 * 60 }]);
+    // The next day only counts what was worked there.
+    store().updateTask(id, { actualSec: 100 * 60 });
+    store().rollover(addDays(today, 1));
+    expect(store().days[today]?.carriedWork).toEqual([{ title: 'Design onboarding', start: null, sec: 10 * 60 }]);
+  });
+
+  it('parks a task in the backlog after it has moved on three times', () => {
+    const id = store().addTask({ title: 'Stale idea', date: yesterday, planned: 30 });
+    store().updateTask(id, { rolled: 3 });
+    store().rollover(today);
+    expect(find(id)).toMatchObject({ date: null, parkedOn: today, rolled: 4 });
+    store().setSettings({ parkAfter: null });
+    const keep = store().addTask({ title: 'Keeps going', date: yesterday, planned: 30 });
+    store().updateTask(keep, { rolled: 7 });
+    store().rollover(today);
+    expect(find(keep).date).toBe(today);
+  });
+
+  it('puts leftovers after what was already planned for today', () => {
+    const ahead = store().addTask({ title: 'Planned ahead', date: today, planned: 30 });
+    const left = store().addTask({ title: 'Leftover', date: yesterday, planned: 30 });
+    store().rollover(today);
+    expect(tasksOn(store().tasks, today).map((t) => t.id)).toEqual([ahead, left]);
+  });
+
+  it('settles a day that was skipped: its standup counts as held and the next one exists', () => {
+    const wed = addDays(today, -2);
+    const thu = addDays(today, -1);
+    const w = store().addTask({ title: 'Standup', date: wed, planned: 15, start: 570, fixed: true });
+    store().updateTask(w, { repeat: 'daily', repeatFrom: wed });
+    store().settleCommitments(wed, 12 * 60);
+    expect(store().tasks.find((t) => t.title === 'Standup' && t.date === thu)?.done).toBe(false);
+    // The app is not opened on Thursday. Friday morning:
+    store().settleCommitments(today, 8 * 60);
+    store().rollover(today);
+    expect(store().tasks.find((t) => t.title === 'Standup' && t.date === thu)?.done).toBe(true);
+    expect(store().tasks.filter((t) => t.title === 'Standup' && !t.done).map((t) => t.date)).toEqual([today]);
+  });
+
+  it('splits a task in two, keeping the tracked time on the first part', () => {
+    const id = store().addTask({ title: 'Design onboarding', date: today, planned: 180, channelId: 'work' });
+    const after = store().addTask({ title: 'Emails', date: today, planned: 30 });
+    store().updateTask(id, { actualSec: 30 * 60 });
+    const second = store().splitTask(id, 60)!;
+    expect(find(id)).toMatchObject({ title: 'Design onboarding (part 1)', planned: 90, actualSec: 30 * 60 });
+    expect(find(second)).toMatchObject({ title: 'Design onboarding (part 2)', planned: 90, actualSec: 0, channelId: 'work', date: today });
+    expect(tasksOn(store().tasks, today).map((t) => t.id)).toEqual([id, second, after]);
+  });
+
+  it('counts putting a task off as moving on, so it parks like a carried one', () => {
+    const id = store().addTask({ title: 'Someday report', date: today, planned: 60 });
+    for (let i = 0; i < 3; i++) store().defer(id, addDays(today, i + 1));
+    expect(find(id)).toMatchObject({ rolled: 3, date: addDays(today, 3) });
+    store().rollover(addDays(today, 4));
+    expect(find(id)).toMatchObject({ date: null, parkedOn: addDays(today, 4) });
+  });
+
+  it('parks a task that is put off once too often', () => {
+    const id = store().addTask({ title: 'Someday deck', date: today, planned: 60 });
+    store().updateTask(id, { rolled: 3 });
+    expect(store().defer(id, addDays(today, 1))).toBe('backlog');
+    expect(find(id)).toMatchObject({ date: null, parkedOn: addDays(today, 1), rolled: 4 });
   });
 
   it('removes only the example tasks', () => {

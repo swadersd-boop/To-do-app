@@ -4,8 +4,8 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
-import { addFromText, copyText, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
-import { autoSchedule as planDay, byTime, freeMinutes, remainingOf, tasksOn } from '../lib/model';
+import { addFromText, copyText, deferOne, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
+import { autoSchedule as planDay, byTime, freeGaps, freeMinutes, planLength, remainingOf, tasksOn } from '../lib/model';
 import { addDays, longDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, weekSummary } from '../lib/stats';
@@ -23,7 +23,7 @@ export function Stepper({ steps, step }: { steps: readonly string[]; step: numbe
       {steps.map((name, i) => (
         <li key={name} className={i === step ? 'is-current' : i < step ? 'is-past' : ''} aria-current={i === step ? 'step' : undefined}>
           <span className="step-num">{i + 1}</span>
-          {name}
+          <span className="step-name">{name}</span>
         </li>
       ))}
     </ol>
@@ -92,6 +92,9 @@ export function PlanRitual() {
   );
   const objectives = allObjectives.filter((o) => o.weekStart === weekStart(today) && !o.done);
   const stuck = leftovers.filter((t) => t.rolled >= 3);
+  // Tasks the rollover sent to the backlog this morning, after moving on too many times.
+  const parked = tasks.filter((t) => t.date === null && t.parkedOn === today);
+  const [deferRest, setDeferRest] = useState(true);
 
   // What the open to-dos still need: estimates minus time already tracked, at your measured pace if you choose.
   const pace = useMemo(() => paceOf(tasks), [tasks]);
@@ -113,7 +116,6 @@ export function PlanRitual() {
   // Only call it late once there is less time left than a normal day holds.
   const late = available < settings.capacityMin;
   const over = planned - available;
-  const tomorrow = addDays(today, 1);
 
   // What "Start my day" would do, so nothing is dropped by surprise.
   // The same rule "Start my day" uses: no more work than the day's capacity, and only the time that is left.
@@ -121,7 +123,23 @@ export function PlanRitual() {
   const budget = Math.max(0, settings.capacityMin - doneToday);
   const preview = useMemo(() => planDay(open, from, until, breaks, budget, usePace), [open, from, until, breaks, budget, usePace]);
   const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
-  const ordered = byTime(open.map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)));
+  // The plan as it will be: what does not fit is left out of it.
+  const ordered = byTime(
+    open.filter((t) => !(deferRest && wontFit.includes(t))).map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)),
+  );
+  // The top task should not start after lower ones just because no early gap is long enough for all of it.
+  const top = open.find((t) => !t.fixed);
+  // The longest free stretch before the top task's planned start, if it is too short for all of it.
+  const gap =
+    top && fill && preview[top.id] != null
+      ? (freeGaps(open, from, until, breaks, 30)
+          .filter((g) => g.start < preview[top.id]!)
+          .sort((a, b) => b.length - a.length)[0] ?? null)
+      : null;
+  const splitAt =
+    top && gap && top.planned !== null && gap.length < planLength(top, from, usePace)
+      ? Math.floor(gap.length / (usePace ? usePace(top) : 1) / 5) * 5
+      : null;
   const summary = planText(today, ordered, channels, intention);
 
   const finish = () => {
@@ -129,6 +147,7 @@ export function PlanRitual() {
     const left = fill ? autoSchedule(today, nowMin, usePace).left : [];
     close();
     if (left.length === 0) return notify('Day planned. Go do the first thing.');
+    if (deferRest) return moveToTomorrow(left.map((t) => t.id), 'Day planned.');
     notify(
       `Day planned. ${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit today.`,
       { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
@@ -235,6 +254,22 @@ export function PlanRitual() {
       {name === 'Leftovers' && (
         <div className="ritual-step">
           <h3>Start with what is left over</h3>
+          {parked.length > 0 && (
+            <div className="wont-fit">
+              <p>
+                {parked.length === 1 ? 'This went' : `These ${parked.length} went`} to the backlog overnight, after moving on {settings.parkAfter ?? 3} times without being done:
+              </p>
+              <ul className="ritual-list">
+                {parked.map((t) => (
+                  <Row key={t.id} task={t}>
+                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, today)}>
+                      Bring back to today
+                    </button>
+                  </Row>
+                ))}
+              </ul>
+            </div>
+          )}
           {leftovers.length === 0 ? (
             <p className="lede">Clean slate. Nothing was carried over from earlier days.</p>
           ) : (
@@ -258,7 +293,7 @@ export function PlanRitual() {
                         Today
                       </button>
                     )}
-                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, tomorrow)}>
+                    <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
                       Tomorrow
                     </button>
                     <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
@@ -281,7 +316,7 @@ export function PlanRitual() {
           <div className="ritual-cols">
             <div>
               <h4>Today ({open.length})</h4>
-              <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => addFromText(t, today)}
+              <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => addFromText(t, today, true)}
         quick />
               <ul className="ritual-list">
                 {open.map((t) => (
@@ -365,7 +400,7 @@ export function PlanRitual() {
                     <ArrowUp size={15} />
                   </button>
                 )}
-                <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, tomorrow)}>
+                <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
                   Tomorrow
                 </button>
                 <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
@@ -388,6 +423,17 @@ export function PlanRitual() {
             <input type="checkbox" checked={fill} onChange={(e) => setFill(e.target.checked)} />
             Put the tasks on my timeline from {fmtClock(from)}, around meetings{breaks.length > 0 ? ' and lunch' : ''}
           </label>
+          {splitAt !== null && splitAt >= 15 && top && (
+            <div className="wont-fit">
+              <p>
+                "{top.title}" is at the top of your list, but no free stretch before {fmtClock(preview[top.id]!)} is long enough for all of it.
+                Split it, and the first {fmtMin(splitAt)} can start at {fmtClock(gap!.start)}.
+              </p>
+              <button type="button" className="btn" onClick={() => useStore.getState().splitTask(top.id, splitAt)}>
+                Split it in two
+              </button>
+            </div>
+          )}
           {wontFit.length > 0 && (
             <div className="wont-fit">
               <p className="row wrap wont-fit-head">
@@ -395,7 +441,7 @@ export function PlanRitual() {
                 {wontFit.length === 1 ? 'This does' : `These ${wontFit.length} do`} not fit in {late ? 'what is left of today' : `your ${fmtMin(settings.capacityMin)} of work`}:
               </span>
                 {wontFit.length > 1 && (
-                  <button type="button" className="btn" onClick={() => wontFit.forEach((t) => sendTo(t.id, tomorrow))}>
+                  <button type="button" className="btn" onClick={() => moveToTomorrow(wontFit.map((t) => t.id))}>
                     Move all to tomorrow
                   </button>
                 )}
@@ -403,7 +449,7 @@ export function PlanRitual() {
               <ul className="ritual-list">
                 {wontFit.map((t) => (
                   <Row key={t.id} task={t}>
-                    <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, tomorrow)}>
+                    <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
                       Tomorrow
                     </button>
                     <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
@@ -413,6 +459,12 @@ export function PlanRitual() {
                 ))}
               </ul>
             </div>
+          )}
+          {wontFit.length > 0 && (
+            <label className="check-row">
+              <input type="checkbox" checked={deferRest} onChange={(e) => setDeferRest(e.target.checked)} />
+              Move what does not fit to tomorrow when I start my day
+            </label>
           )}
           <h4>Your plan</h4>
           <pre className="summary">{summary}</pre>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { autoSchedule, planLength, remainingOf, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
+import { autoSchedule, freeGaps, planLength, remainingOf, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
 import { forecast, honesty, paceOf, weekSummary } from '../src/lib/stats';
 import { addDays, diffDays, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
@@ -101,7 +101,7 @@ describe('moveTask', () => {
 });
 
 describe('rollover', () => {
-  it('carries unfinished past tasks to the top of today, oldest first', () => {
+  it('carries unfinished past tasks to today after what is already there, oldest first', () => {
     const old = task({ id: 'old', date: '2026-11-13', order: 4, start: 540 });
     const yesterday = task({ id: 'yesterday', date: '2026-11-15', order: 0 });
     const finished = task({ id: 'finished', date: '2026-11-15', order: 1, done: true });
@@ -109,7 +109,7 @@ describe('rollover', () => {
     const later = task({ id: 'later', date: null, order: 0 });
     const out = rollover([today, finished, yesterday, old, later], '2026-11-16');
 
-    expect(ids(tasksOn(out, '2026-11-16'))).toEqual(['old', 'yesterday', 'today']);
+    expect(ids(tasksOn(out, '2026-11-16'))).toEqual(['today', 'old', 'yesterday']);
     expect(out.find((t) => t.id === 'old')).toMatchObject({ rolled: 1, start: null });
     expect(out.find((t) => t.id === 'finished')!.date).toBe('2026-11-15');
     expect(out.find((t) => t.id === 'later')!.date).toBeNull();
@@ -412,5 +412,19 @@ describe('paceOf', () => {
     expect(paceOf([])).toBeNull();
     const wild = [...Array(5)].map(() => done(10, 100, 'x'));
     expect(paceOf(wild)!(task({ channelId: 'x' }))).toBe(2);
+  });
+});
+
+describe('freeGaps', () => {
+  it('lists every free stretch of at least the minimum length', () => {
+    const day = [task({ start: 570, planned: 15, fixed: true }), task({ start: 900, planned: 60 })];
+    // Finished work counts as taken: from 08:40 the first free stretch starts at 09:00.
+    const withDone = [...day, task({ start: 520, planned: 20, done: true })];
+    expect(freeGaps(withDone, 520, 19 * 60, [{ start: 720, end: 780 }], 30)[0]).toEqual({ start: 540, length: 30 });
+    expect(freeGaps(day, 525, 19 * 60, [{ start: 720, end: 780 }], 30)).toEqual([
+      { start: 525, length: 45 },
+      { start: 585, length: 135 },
+      { start: 780, length: 360 },
+    ]);
   });
 });

@@ -23,6 +23,8 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const selectDay = useUI((s) => s.selectDay);
 
   const list = useMemo(() => tasksOn(tasks, date), [tasks, date]);
+  // The quick-add hint is for people still getting started.
+  const newcomer = useMemo(() => tasks.filter((t) => !t.example).length < 10, [tasks]);
   const isToday = date === today;
   const isPast = date < today;
   // Repeating tasks that will land on this day once their current occurrence is finished.
@@ -67,7 +69,9 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
           {empty
             ? 'Nothing planned'
             : isPast
-              ? `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} tracked` : ''}`
+              ? doneCount === 0 && tracked < 1 && !log?.plannedAt
+                ? 'Not planned'
+                : `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} tracked` : ''}`
               : over > 0
                 ? `${fmtMin(planned)} of work, ${fmtMin(over)} over`
                 : `${fmtMin(planned)} of ${fmtMin(capacity)}`}
@@ -98,7 +102,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
       {!isPast && (
         <AddLine
           inputRef={addRef}
-          placeholder={isToday ? 'Try: Email Sam 15m #work' : 'Add a task'}
+          placeholder={isToday && newcomer ? 'Try: Email Sam 15m #work' : 'Add a task'}
           label={`Add a task to ${label}`}
           onAdd={(text) => addFromText(text, date)}
           quick
@@ -114,14 +118,18 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
             <GhostCard key={`ghost-${t.id}`} task={t} />
           ))}
           {isPast &&
-            (log?.carriedTitles ?? []).map((title, i) => (
-              <li key={`moved-${i}`} className="card card-moved" title="Planned for this day, not finished, moved on to a later day">
-                <span className="moved-mark" aria-hidden="true">
-                  ↪
-                </span>
-                <span className="card-title">{title}</span>
-              </li>
-            ))}
+            (log?.carriedTitles ?? []).map((title, i) => {
+              const worked = log?.carriedWork?.find((w) => w.title === title)?.sec ?? 0;
+              return (
+                <li key={`moved-${i}`} className="card card-moved" title="Planned for this day, not finished, moved on to a later day">
+                  <span className="moved-mark" aria-hidden="true">
+                    ↪
+                  </span>
+                  <span className="card-title">{title}</span>
+                  {worked >= 60 && <span className="chip">{fmtMin(worked / 60)} worked</span>}
+                </li>
+              );
+            })}
           {empty && !isPast && <li className="col-empty">Drop a task here.</li>}
         </ul>
       </SortableContext>

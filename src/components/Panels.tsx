@@ -133,6 +133,21 @@ export function Settings() {
           Carry unfinished tasks over to today automatically
         </label>
         {settings.autoRollover && (
+          <label className="stack">
+            <span>Send a task to the backlog after it has moved on</span>
+            <select
+              className="field"
+              value={settings.parkAfter === undefined ? 3 : (settings.parkAfter ?? '')}
+              onChange={(e) => setSettings({ parkAfter: e.target.value === '' ? null : Number(e.target.value) })}
+            >
+              <option value={2}>2 times</option>
+              <option value={3}>3 times</option>
+              <option value={5}>5 times</option>
+              <option value="">Never</option>
+            </select>
+          </label>
+        )}
+        {settings.autoRollover && (
           <label className="check-row">
             <input type="checkbox" checked={Boolean(settings.weekendRollover)} onChange={(e) => setSettings({ weekendRollover: e.target.checked })} />
             Also on Saturdays and Sundays (otherwise Friday's leftovers wait for Monday)

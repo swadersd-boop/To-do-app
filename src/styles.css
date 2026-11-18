@@ -937,6 +937,7 @@ textarea::placeholder {
 }
 
 .card-moved .card-title {
+  flex: 1;
   color: var(--ink-2);
 }
 
@@ -1182,6 +1183,16 @@ li:focus-within > .row-x {
   gap: 8px;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+.block.is-trace {
+  border-style: dashed;
+  border-left-style: solid;
+  border-left-color: var(--ink-3);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-2);
+  cursor: default;
 }
 
 .block.is-fixed {
@@ -2114,8 +2125,17 @@ li:focus-within > .row-x {
     padding: 0 6px;
   }
 
+  /* The logo makes room for the week buttons on a phone. */
   .brand {
-    margin: 0 4px 0 2px;
+    display: none;
+  }
+
+  .top-nav .icon-btn.hide-narrow {
+    display: inline-grid;
+  }
+
+  .top-nav .btn {
+    padding: 0 6px;
   }
 
   .brand span,
@@ -2280,6 +2300,19 @@ li:focus-within > .row-x {
 
   .ritual-row {
     flex-wrap: wrap;
+  }
+
+  /* Only the current step is named on a phone; the others show their number. */
+  .stepper li:not(.is-current) .step-name {
+    display: none;
+  }
+
+  .stepper li {
+    flex: 1 1 auto;
+  }
+
+  .stepper li.is-current {
+    flex: 3 1 auto;
   }
 
   /* The title takes its own line, with the estimate and actions under it. */
