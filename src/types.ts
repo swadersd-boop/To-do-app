@@ -49,6 +49,8 @@ export interface Task {
    * half-done task books only the time it still needs.
    */
   blockMin?: number | null;
+  /** Each run of the timer on this task, as epoch milliseconds: when the work actually happened. */
+  sessions?: { from: number; to: number }[];
   /** Later blocks of the same task on the same day, when the plan splits it around meetings or breaks. */
   parts?: { start: number; length: number }[] | null;
   /** Seconds tracked on earlier days, before the task was carried over to this one. */

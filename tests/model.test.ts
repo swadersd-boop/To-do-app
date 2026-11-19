@@ -76,6 +76,18 @@ describe('time formatting', () => {
   });
 });
 
+describe('tasksOn', () => {
+  it('lists meetings first in time order, then the to-dos in the order you set', () => {
+    const list = [
+      task({ id: 'b', order: 0 }),
+      task({ id: 'oneone', order: 1, start: 840, fixed: true }),
+      task({ id: 'a', order: 2 }),
+      task({ id: 'standup', order: 3, start: 570, fixed: true }),
+    ];
+    expect(ids(tasksOn(list, '2026-11-16'))).toEqual(['standup', 'oneone', 'b', 'a']);
+  });
+});
+
 describe('moveTask', () => {
   const a = task({ id: 'a', order: 0 });
   const b = task({ id: 'b', order: 1 });
@@ -235,6 +247,14 @@ describe('summaries', () => {
     expect(text.endsWith('Work: 2h')).toBe(true);
   });
 
+  it('totals the work the same way as its lines, and names a task past its estimate', () => {
+    const tasks = [task({ title: 'Memo', planned: 120, actualSec: 25 * 60, channelId: 'w' }), task({ title: 'Research', planned: 60, actualSec: 70 * 60 })];
+    const text = planText('2026-11-16', tasks, channels, '', (t) => (t.channelId === 'w' ? 1.5 : 1));
+    expect(text).toContain('1. Memo (1h 35m left of 2h) #work');
+    expect(text).toContain('2. Research (past its 1h estimate)');
+    expect(text).toContain('Work: 1h 50m by your estimates, about 2h 40m at your pace');
+  });
+
   it('says what is left of a started task, and what was done before today', () => {
     const plan = planText('2026-11-16', [task({ title: 'Tax return', planned: 180, actualSec: 120 * 60 })], channels, '');
     expect(plan).toContain('1. Tax return (1h left of 3h)');
@@ -297,6 +317,13 @@ describe('what to work on now', () => {
     const memo = task({ id: 'memo', order: 0, planned: 120, start: 540, parts: [{ start: 800, length: 30 }] });
     const review = task({ id: 'review', order: 1, planned: 60, start: 700 });
     expect(workQueue([memo, review], 690).map((t) => t.id)).toEqual(['review', 'memo']);
+  });
+
+  it('puts work that is behind first', () => {
+    const legal = task({ id: 'legal', order: 1, planned: 30, start: 600 });
+    const budget = task({ id: 'budget', order: 2, planned: 60, start: 780 });
+    // At 11:40 the 10:00 reply is overdue, so it comes before the 13:00 budget review.
+    expect(focusTarget([legal, budget], 700)!.id).toBe('legal');
   });
 
   it('never picks a meeting to focus on', () => {
@@ -399,16 +426,37 @@ describe('planDay: one stream in priority order', () => {
     expect(spans(planDay([brief], 690, 19 * 60).brief)).toEqual([[660, 730]]);
   });
 
-  it('skips what does not fit and carries on with the next task', () => {
+  it('books what fits of a long task and lets the bottom of the list drop off', () => {
+    // The afternoon has two hours; the five-hour task gets them, and the smaller task below it waits.
     const big = task({ id: 'big', order: 0, planned: 300 });
     const small = task({ id: 'small', order: 1, planned: 60 });
     const plan = planDay([big, small], 17 * 60, 19 * 60);
+    expect(spans(plan.big)).toEqual([[1020, 1140]]);
+    expect(plan.big!.partial).toBe(true);
+    expect(plan.small).toBeNull();
+  });
+
+  it('fills the capacity that is left instead of dropping the long task (the critic\'s Tuesday)', () => {
+    const top = task({ id: 'top', order: 0, planned: 120 });
+    const blog = task({ id: 'blog', order: 1, planned: 180 });
+    const offsite = task({ id: 'offsite', order: 2, planned: 60 });
+    // 4h 30m of capacity: the top task's 2h, then 2h 30m of the 3h blog post; the offsite drops off.
+    const plan = planDay([top, blog, offsite], 540, 19 * 60, [], 270);
+    expect(spans(plan.top)).toEqual([[540, 660]]);
+    expect(spans(plan.blog)).toEqual([[660, 810]]);
+    expect(plan.blog!.partial).toBe(true);
+    expect(plan.offsite).toBeNull();
+  });
+
+  it('never books a scrap under half an hour of a long task', () => {
+    const plan = planDay([task({ id: 'big', planned: 120 })], 18 * 60 + 40, 19 * 60);
     expect(plan.big).toBeNull();
-    expect(spans(plan.small)).toEqual([[1020, 1080]]);
   });
 
   it('stops at the budget, and plans at the given pace', () => {
-    expect(planDay([task({ id: 'x', planned: 60 })], 540, 19 * 60, [], 30).x).toBeNull();
+    // With half an hour of capacity left, an hour-long task gets that half hour today.
+    expect(planDay([task({ id: 'x', planned: 60 })], 540, 19 * 60, [], 30).x).toEqual({ blocks: [{ start: 540, end: 570 }], partial: true });
+    expect(planDay([task({ id: 'y', planned: 60 })], 540, 19 * 60, [], 25).y).toBeNull();
     const deep = task({ id: 'deep', order: 0, planned: 60, channelId: 'deep' });
     const next = task({ id: 'next', order: 1, planned: 30 });
     const plan = planDay([deep, next], 540, 19 * 60, [], Number.POSITIVE_INFINITY, (t) => (t.channelId === 'deep' ? 1.5 : 1));

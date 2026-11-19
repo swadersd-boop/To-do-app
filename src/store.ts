@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, isWeekend, todayISO, weekStart } from './lib/dates';
 import { paceOf, workDone } from './lib/stats';
-import { DEFAULT_BLOCK, lengthOf, moveTask, nextOccurrence, planDay, rollover, tasksOn, type Pace, type Span } from './lib/model';
+import { DEFAULT_BLOCK, lengthOf, moveTask, nextOccurrence, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -111,10 +111,10 @@ interface Actions {
    * overnight carry-over, and parks it in the backlog past the same limit.
    * Returns where it went.
    */
-  defer: (id: string, date: ISODate) => 'day' | 'backlog';
+  defer: (id: string, date: ISODate, options?: { counts?: boolean }) => 'day' | 'backlog';
   rollover: (today: ISODate) => void;
-  /** Replans the flexible tasks of a day. Returns how many got a time and which did not fit. */
-  autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[] };
+  /** Replans the flexible tasks of a day. Returns how many got a time, which did not fit, which only partly fit, and where it started. */
+  autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[]; partial: { task: Task; minutes: number }[]; start: number };
   clearSchedule: (date: ISODate) => void;
   removeExamples: () => void;
 
@@ -166,8 +166,12 @@ function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 't
   if (!state.timer) return { tasks: state.tasks, timer: null };
   const { taskId, startedAt } = state.timer;
   const elapsed = Math.min(MAX_SESSION_SEC, Math.max(0, Math.round((now - startedAt) / 1000)));
+  // Keep when the work happened, not only how long it took.
+  const session = { from: startedAt, to: startedAt + elapsed * 1000 };
   return {
-    tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, actualSec: t.actualSec + elapsed } : t)),
+    tasks: state.tasks.map((t) =>
+      t.id === taskId ? { ...t, actualSec: t.actualSec + elapsed, sessions: elapsed >= 60 ? [...(t.sessions ?? []), session] : t.sessions } : t,
+    ),
     timer: null,
   };
 }
@@ -292,13 +296,10 @@ export const useStore = create<Store>()(
           const now = new Date();
           const nowMin = now.getHours() * 60 + now.getMinutes();
           tasks = complete(tasks, task, todayISO(now));
-          // With tracked time, the block becomes a record of the work: it ends now and is as long as the time spent.
-          const worked = settled.tasks.find((t) => t.id === id)!;
-          const spentMin = (worked.actualSec - (worked.trackedBefore ?? 0)) / 60;
-          if (!task.fixed && task.date === todayISO(now) && spentMin >= 5) {
-            const length = Math.max(15, Math.round(spentMin / 5) * 5);
-            const start = Math.max(0, Math.floor((nowMin - spentMin) / 5) * 5);
-            tasks = tasks.map((t) => (t.id === id ? { ...t, start, blockMin: length, parts: null } : t));
+          // With timer sessions, the timeline shows those; the task starts where the work started. Nothing is made up.
+          const worked = sessionsOn(settled.tasks.find((t) => t.id === id)!, todayISO(now));
+          if (!task.fixed && task.date === todayISO(now) && worked.length > 0) {
+            tasks = tasks.map((t) => (t.id === id ? { ...t, start: worked[0].start, blockMin: null, parts: null } : t));
           } else if (!task.fixed && task.date === todayISO(now) && task.start !== null) {
             // Without tracked time: finishing early frees the slot planned for later,
             // and a block finished partway through shrinks to the time it took.
@@ -338,14 +339,15 @@ export const useStore = create<Store>()(
           tasks: moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER).map((t) => (t.id === id ? { ...t, rolled: 0, parkedOn: null } : t)),
         })),
 
-      defer: (id, date) => {
+      defer: (id, date, options) => {
         const s = get();
         const task = s.tasks.find((t) => t.id === id);
+        const counts = options?.counts !== false;
         const limit = s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter;
-        const parks = Boolean(task) && limit !== null && task!.rolled >= limit;
+        const parks = counts && Boolean(task) && limit !== null && task!.rolled >= limit;
         set({
           tasks: moveTask(s.tasks, id, parks ? null : date, Number.MAX_SAFE_INTEGER).map((t) =>
-            t.id === id ? { ...t, rolled: t.rolled + 1, parkedOn: parks ? date : t.parkedOn } : t,
+            t.id === id ? { ...t, rolled: t.rolled + (counts ? 1 : 0), parkedOn: parks ? date : t.parkedOn } : t,
           ),
         });
         return parks ? 'backlog' : 'day';
@@ -386,7 +388,7 @@ export const useStore = create<Store>()(
         const budget = Math.max(0, s.settings.capacityMin - workDone(day));
         // Round as the scheduler does, so both agree on what is under way.
         const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 5) * 5;
-        const plan = planDay(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace);
+        const plan = planDay(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace, date);
         const scheduled = s.tasks.map((t) => {
           const placement = plan[t.id];
           if (placement === undefined) return t;
@@ -405,6 +407,10 @@ export const useStore = create<Store>()(
         return {
           placed: Object.values(plan).filter((v) => v !== null).length,
           left: day.filter((t) => plan[t.id] === null),
+          partial: day
+            .filter((t) => plan[t.id]?.partial)
+            .map((t) => ({ task: t, minutes: plan[t.id]!.blocks.reduce((sum, b) => sum + b.end - b.start, 0) })),
+          start,
         };
       },
 

@@ -1,7 +1,7 @@
 import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
 import { fmtClock, fmtMin } from './time';
-import { plannedTotal, todaySec, trackedOn, workLeft } from './stats';
+import { plannedTotal, todaySec, workDone, workLeft } from './stats';
 
 const tag = (t: Task, channels: Channel[]) => {
   const c = channels.find((x) => x.id === t.channelId);
@@ -13,6 +13,7 @@ function size(t: Task): string {
   if (!t.planned) return '';
   const done = t.actualSec / 60;
   if (done < 1) return ` (${fmtMin(t.planned)})`;
+  if (done >= t.planned) return ` (past its ${fmtMin(t.planned)} estimate)`;
   return ` (${fmtMin(Math.max(0, t.planned - done))} left of ${fmtMin(t.planned)})`;
 }
 
@@ -25,15 +26,17 @@ export function planText(date: ISODate, tasks: Task[], channels: Channel[], inte
     lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${size(t)}${tag(t, channels)}`),
   );
   if (tasks.length === 0) lines.push('Nothing planned yet.');
-  // The same measure as the plan: what the to-dos still need, with meetings listed apart.
-  const work = workLeft(tasks, pace);
+  // The same measure as the plan: what the to-dos still need by their estimates, and at your pace when that differs.
+  const work = workLeft(tasks);
+  const atPace = pace ? workLeft(tasks, pace) : work;
   const meetings = plannedTotal(tasks.filter((t) => t.fixed));
-  if (work + meetings > 0) lines.push('', [work > 0 ? `Work: ${fmtMin(work)}` : '', meetings > 0 ? `Meetings: ${fmtMin(meetings)}` : ''].filter(Boolean).join(' · '));
+  const workLine = work > 0 ? (Math.abs(atPace - work) >= 5 ? `Work: ${fmtMin(work)} by your estimates, about ${fmtMin(atPace)} at your pace` : `Work: ${fmtMin(work)}`) : '';
+  if (work + meetings > 0) lines.push('', [workLine, meetings > 0 ? `Meetings: ${fmtMin(meetings)}` : ''].filter(Boolean).join(' · '));
   return lines.join('\n');
 }
 
 /** The end-of-day recap as plain text. */
-export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], reflection: string): string {
+export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], reflection: string, pace?: (t: Task) => number): string {
   const done = tasks.filter((t) => t.done && !t.fixed);
   const open = tasks.filter((t) => !t.done);
   const lines = [`Shutdown for ${longDate(date)}`, ''];
@@ -53,8 +56,9 @@ export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], 
     for (const t of left) lines.push(`- ${t.title}${tag(t, channels)}`);
   }
   if (tasks.length === 0) lines.push('Nothing was planned today.');
-  const actual = trackedOn(tasks);
-  const undone = workLeft(tasks);
+  // The same two numbers as the day column: work done today, and what is still left at the plan's pace.
+  const actual = workDone(tasks);
+  const undone = workLeft(tasks, pace);
   if (actual >= 1 || undone > 0) lines.push('', [actual >= 1 ? `Worked ${fmtMin(actual)}.` : '', undone > 0 ? `${fmtMin(undone)} of work left undone.` : ''].filter(Boolean).join(' '));
   if (reflection.trim()) lines.push('', `Reflection: ${reflection.trim()}`);
   return lines.join('\n');

@@ -89,7 +89,9 @@ assert.equal(await cardIn(today, 'Move me to another day').count(), 0, 'card lef
 
 // 4. Reorder inside a day.
 await drag(brief, cardIn(today, 'Press "Plan today"'), { x: 0, y: 4 });
-assert.match(await today.locator('.card-wrap').first().innerText(), /Write the launch brief/, 'brief moved to the top');
+// Meetings sit at the top of the day by time; among the to-dos, the brief is now first.
+const order = (await today.locator('.card-wrap:not(:has(.meta-fixed))').allInnerTexts()).map((t) => t.split('\n')[0]);
+assert.equal(order[0], 'Write the launch brief', 'brief moved to the top of the to-dos');
 
 // 5. Drag a card onto the timeline to timebox it.
 const grid = page.locator('[data-timeline-grid]');

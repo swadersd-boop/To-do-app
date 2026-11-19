@@ -81,7 +81,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
               : over > 0
                 ? `${fmtMin(left)} left, ${fmtMin(over)} more than fits`
                 : worked >= 1
-                  ? `${fmtMin(left)} left · ${fmtMin(worked)} done of ${fmtMin(capacity)}`
+                  ? `${fmtMin(left)} left · ${fmtMin(worked)} worked of ${fmtMin(capacity)}`
                   : `${fmtMin(left)} of ${fmtMin(capacity)}`}
           {!isPast && fixed > 0 && ` · ${fmtMin(fixed)} fixed`}
           {!isPast && doneCount > 0 && worked < 1 && ` · ${doneCount} done`}

@@ -2,7 +2,7 @@ import type { ISODate } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
 import { parseQuickAdd } from './lib/parse';
-import { nextWorkday, relativeDay } from './lib/dates';
+import { nextWorkday, relativeDay, toISO } from './lib/dates';
 
 /** Creates a task from one typed line. Returns its id, or null for an empty title. */
 export function addFromText(text: string, fallbackDate: ISODate | null, atTop = false): string | null {
@@ -58,12 +58,18 @@ export function moveToTomorrow(ids: string[], prefix = ''): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
-  const parked = ids.filter((id) => store.defer(id, nextWorkday(today, Boolean(store.settings.weekendRollover))) === 'backlog');
+  const target = nextWorkday(today, Boolean(store.settings.weekendRollover));
+  // A task added today and moved by the plan has not really moved on yet.
+  const createdToday = (id: string) => {
+    const t = before.find((x) => x.id === id);
+    return Boolean(t) && toISO(new Date(t!.createdAt)) === today;
+  };
+  const parked = ids.filter((id) => store.defer(id, target, { counts: !createdToday(id) }) === 'backlog');
   const moved = ids.filter((id) => !parked.includes(id));
   const titles = (list: string[]) => nameTasks(before.filter((t) => list.includes(t.id)));
   const message = [
     prefix,
-    moved.length > 0 ? `Moved ${titles(moved)} to tomorrow.` : '',
+    moved.length > 0 ? `Moved ${titles(moved)} to ${relativeDay(target, today).toLowerCase() === 'tomorrow' ? 'tomorrow' : relativeDay(target, today)}.` : '',
     parked.length > 0 ? `${titles(parked)} went to the backlog after moving on too often.` : '',
   ]
     .filter(Boolean)

@@ -4,9 +4,9 @@ import { Pin, Wand2, X } from 'lucide-react';
 import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
-import { layoutBlocks, lengthOf, tasksOn, timelineRange } from '../lib/model';
-import { relativeDay, shortDate } from '../lib/dates';
-import { fmtClock, snap } from '../lib/time';
+import { estimateUsedUp, layoutBlocks, lengthOf, sessionsOn, tasksOn, timelineRange } from '../lib/model';
+import { nextWorkday, relativeDay, shortDate } from '../lib/dates';
+import { fmtClock, fmtMin, snap } from '../lib/time';
 import { useNow } from './bits';
 import { moveToTomorrow, nameTasks } from '../actions';
 
@@ -115,13 +115,21 @@ function Block({
     if (!gesture) return;
     if (!gesture.moved) {
       if (gesture.mode === 'move') openTask(task.id);
-    } else if (gesture.mode === 'move') {
-      // Moving a split task by hand makes it one block, as long as all its parts together.
-      const total = lengthOf(task) + (task.parts ?? []).reduce((sum, p) => sum + p.length, 0);
-      updateTask(task.id, task.parts?.length ? { start: gesture.start, blockMin: total, parts: null } : { start: gesture.start });
+    } else {
+      const before = useStore.getState().tasks;
+      if (gesture.mode === 'move') {
+        // The whole task moves together, keeping its shape.
+        const delta = gesture.start - task.start!;
+        updateTask(task.id, { start: gesture.start, parts: task.parts?.map((p) => ({ ...p, start: p.start + delta })) ?? null });
+      } else {
+        // Resizing changes this block only. The estimate stays as it was, so Insights stays honest.
+        updateTask(task.id, task.planned === null ? { planned: gesture.length } : { blockMin: gesture.length });
+      }
+      useUI.getState().notify(gesture.mode === 'move' ? `Moved "${task.title}"` : `Resized "${task.title}"`, {
+        label: 'Undo',
+        run: () => useStore.setState({ tasks: before }),
+      });
     }
-    // Resizing changes the timebox, as one block. The estimate stays as it was, so Insights stays honest.
-    else updateTask(task.id, task.planned === null ? { planned: gesture.length, parts: null } : { blockMin: gesture.length, parts: null });
     setGesture(null);
   };
 
@@ -171,18 +179,20 @@ function Block({
       <span className="block-time">
         {fmtClock(start)} to {fmtClock(start + length)}
       </span>
-      <button
-        type="button"
-        className="block-x"
-        aria-label="Remove from timeline"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          updateTask(task.id, { start: null });
-        }}
-      >
-        <X size={12} />
-      </button>
+      {!task.fixed && (
+        <button
+          type="button"
+          className="block-x"
+          aria-label="Remove from timeline"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            updateTask(task.id, { start: null });
+          }}
+        >
+          <X size={12} />
+        </button>
+      )}
       <span className="block-grip" onPointerDown={begin('resize')} aria-hidden="true" />
     </div>
   );
@@ -210,23 +220,37 @@ export function Timeline() {
   const { start: dayStart, end: dayEnd } = useMemo(() => timelineRange(list, settings.dayStart, settings.dayEnd), [list, settings.dayStart, settings.dayEnd]);
   const dayStartMin = dayStart * 60;
   const dayEndMin = dayEnd * 60;
-  const boxed = list.filter((t) => t.start !== null);
+  // Where work actually happened on this day, from the timer: for every task, also ones that later moved on.
+  const worked = useMemo(
+    () =>
+      tasks.flatMap((t) =>
+        sessionsOn(t, day).map((w, i) => ({ id: `${t.id}:s${i}`, task: t, start: w.start, length: Math.max(STEP, w.end - w.start) })),
+      ),
+    [tasks, day],
+  );
+  const hasWork = (t: Task) => worked.some((w) => w.task.id === t.id);
+  // Once there is real work to show, a plan that is already behind us is not drawn as well.
+  const stillAhead = (start: number, length: number) => day === today && start + length > nowMin;
+  const boxed = list.filter((t) => t.start !== null && (!hasWork(t) || (!t.done && stillAhead(t.start, lengthOf(t)))));
+  const partsOf = (t: Task) => (t.parts ?? []).filter((p) => !hasWork(t) || (!t.done && stillAhead(p.start, p.length)));
   // Work done here on tasks that later moved on to another day, shown where it happened.
   const traces = useMemo(
     () =>
       (day < today ? (log?.carriedWork ?? []) : [])
-        .filter((w) => w.start !== null)
+        // Older records without timer sessions only.
+        .filter((w) => w.start !== null && !worked.some((x) => x.task.title === w.title))
         .map((w, i) => ({ id: `trace-${i}`, title: w.title, start: w.start!, length: Math.max(STEP, Math.round(w.sec / 60)) })),
-    [log, day, today],
+    [log, day, today, worked],
   );
   const layout = useMemo(
     () =>
       layoutBlocks([
         ...boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) })),
-        ...boxed.flatMap((t) => (t.parts ?? []).map((p, i) => ({ id: `${t.id}:part${i}`, start: p.start, end: p.start + Math.max(STEP, p.length) }))),
+        ...boxed.flatMap((t) => partsOf(t).map((p, i) => ({ id: `${t.id}:part${i}`, start: p.start, end: p.start + Math.max(STEP, p.length) }))),
+        ...worked.map((w) => ({ id: w.id, start: w.start, end: w.start + w.length })),
         ...traces.map((w) => ({ id: w.id, start: w.start, end: w.start + w.length })),
       ]),
-    [boxed],
+    [boxed, worked, traces],
   );
   const hours = Array.from({ length: dayEnd - dayStart }, (_, i) => dayStart + i);
   const showNow = day === today && nowMin >= dayStartMin && nowMin <= dayEndMin;
@@ -235,22 +259,29 @@ export function Timeline() {
     if (day !== today || !scroller.current) return;
     scroller.current.scrollTop = Math.max(0, (nowMin - dayStartMin) * PX_PER_MIN - 120);
     // Scroll to "now" only when the day changes, not every minute.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day, today]);
 
   const withUndo = (message: string, before: typeof tasks) =>
     notify(message, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
 
+  // "tomorrow", or the day's name when the next working day is further off.
+  const nextDay = relativeDay(nextWorkday(today, Boolean(settings.weekendRollover)), today);
+  const nextName = nextDay === 'Tomorrow' ? 'tomorrow' : nextDay;
   const fill = () => {
     const before = useStore.getState().tasks;
     const from = day === today ? nowMin : dayStartMin;
-    const { placed, left } = autoSchedule(day, from);
+    const { placed, left, partial, start } = autoSchedule(day, from);
     const undo = { label: 'Undo', run: () => useStore.setState({ tasks: before }) };
-    if (left.length === 0) return notify(`Planned ${placed} task${placed === 1 ? '' : 's'} from ${fmtClock(Math.max(from, settings.dayStart * 60))}, in list order`, undo);
-    // Say exactly what dropped off, and offer the obvious way out.
+    // Say where it started, what only partly fits and what dropped off, and offer the obvious way out.
+    const over = list.filter((t) => !t.fixed && estimateUsedUp(t));
+    const part = [
+      ...partial.map((p) => `"${p.task.title}" gets ${fmtMin(p.minutes)} today, the rest stays to do.`),
+      ...(over.length > 0 ? [`${nameTasks(over)} ${over.length === 1 ? 'is' : 'are'} past the estimate and got 15 minutes; open ${over.length === 1 ? 'it' : 'them'} to say how much is left.`] : []),
+    ].join(' ');
+    if (left.length === 0) return notify([`Planned ${placed} task${placed === 1 ? '' : 's'} from ${fmtClock(start)}, in list order.`, part].filter(Boolean).join(' '), undo);
     notify(
-      `${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit in the rest of today.`,
-      { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
+      [part, `${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit in the rest of today.`].filter(Boolean).join(' '),
+      { label: `Move to ${nextName}`, run: () => moveToTomorrow(left.map((t) => t.id)) },
       undo,
     );
   };
@@ -338,8 +369,35 @@ export function Timeline() {
                 </div>
               );
             })}
+            {worked.map((w) => {
+              const width = 100 / (layout[w.id]?.cols ?? 1);
+              return (
+                <div
+                  key={w.id}
+                  className={`block is-worked ${w.length <= 30 ? 'is-short' : ''}`}
+                  style={{
+                    top: (w.start - dayStartMin) * PX_PER_MIN,
+                    height: w.length * PX_PER_MIN - 2,
+                    left: `calc(${(layout[w.id]?.col ?? 0) * width}% + 2px)`,
+                    width: `calc(${width}% - 4px)`,
+                    borderLeftColor: channelColor(w.task.channelId) ?? 'var(--accent)',
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${w.task.title}, worked ${fmtClock(w.start)} to ${fmtClock(w.start + w.length)}`}
+                  title="Worked on, from the timer"
+                  onClick={() => useUI.getState().openTask(w.task.id)}
+                  onKeyDown={(e) => e.key === 'Enter' && useUI.getState().openTask(w.task.id)}
+                >
+                  <span className="block-title">{w.task.title}</span>
+                  <span className="block-time">
+                    worked {fmtClock(w.start)} to {fmtClock(w.start + w.length)}
+                  </span>
+                </div>
+              );
+            })}
             {boxed.flatMap((t) =>
-              (t.parts ?? []).map((p, i) => {
+              partsOf(t).map((p, i) => {
                 const key = `${t.id}:part${i}`;
                 const width = 100 / (layout[key]?.cols ?? 1);
                 return (

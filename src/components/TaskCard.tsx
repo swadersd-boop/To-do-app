@@ -35,7 +35,7 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
           <CheckCircle checked={task.done} onChange={() => toggleDone(task.id)} label={task.done ? 'Mark as not done' : 'Mark as done'} />
         )}
         <span className="card-title">{task.title}</span>
-        {!task.done && (
+        {!task.done && !task.fixed && (
           <button
             type="button"
             className="icon-btn card-play"

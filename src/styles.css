@@ -1192,6 +1192,15 @@ li:focus-within > .row-x {
   padding-bottom: 0;
 }
 
+.block.is-worked {
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
+  cursor: pointer;
+}
+
+.block.is-worked .block-time {
+  color: var(--ink-2);
+}
+
 .block.is-part {
   border-style: dashed;
   border-left-style: solid;

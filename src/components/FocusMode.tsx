@@ -25,7 +25,8 @@ export function FocusMode() {
   // The next thing to work on skips meetings that have not started; the next meeting is mentioned separately.
   // Meetings are never something to focus on; the next one is mentioned below.
   const next = queue.find((t) => !t.fixed);
-  const meeting = queue.find((t) => t.fixed && t.start !== null && t.start > nowMin + 5);
+  // The next meeting, including one starting now or in a few minutes.
+  const meeting = queue.find((t) => t.fixed && t.start !== null && t.start + 15 > nowMin);
   const { seconds, running } = useTracked(task?.id ?? '', task?.actualSec ?? 0);
 
   const close = () => useUI.getState().openModal(null);
@@ -156,7 +157,7 @@ export function FocusMode() {
           {meeting && (
             <>
               <br />
-              Next meeting: {meeting.title} at {fmtClock(meeting.start!)}
+              {meeting.start! <= nowMin ? `Meeting now: ${meeting.title}` : `Next meeting: ${meeting.title} at ${fmtClock(meeting.start!)}`}
             </>
           )}
         </p>

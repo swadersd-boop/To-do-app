@@ -3,11 +3,10 @@ import { ArrowLeft, ArrowRight, Copy } from 'lucide-react';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { copyText, deferOne } from '../actions';
-import { tasksOn } from '../lib/model';
-import { addDays, longDate, nextWorkday, weekdayName } from '../lib/dates';
-import { fmtMin } from '../lib/time';
-import { todaySec, trackedOn, workLeft } from '../lib/stats';
-import { fmtClock } from '../lib/time';
+import { estimateUsedUp, tasksOn } from '../lib/model';
+import { addDays, longDate, nextWorkday, relativeDay, weekdayName } from '../lib/dates';
+import { paceOf, todaySec, workDone, workLeft } from '../lib/stats';
+import { fmtClock, fmtMin } from '../lib/time';
 import { shutdownText } from '../lib/summary';
 import { ChannelPill, CheckCircle, Dialog, DurationInput } from './bits';
 import { Stepper } from './PlanRitual';
@@ -37,10 +36,13 @@ export function ShutdownRitual() {
   const tomorrow = nextWorkday(today, weekends);
   const nextDay = tomorrow === addDays(today, 1) ? 'tomorrow' : weekdayName(tomorrow);
   // Unfinished to-dos carry over on their own, so they are part of tomorrow's list too.
-  const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done).length + open.length;
-  const left = workLeft(open);
-  const actual = trackedOn(todays);
-  const summary = shutdownText(today, todays, channels, reflection);
+  const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done && !t.fixed).length + open.length;
+  // The same numbers as the day column: worked today, and left at the plan's pace.
+  const atPace = useStore((s) => s.settings.planAtPace !== false);
+  const pace = useMemo(() => (atPace ? (paceOf(tasks) ?? undefined) : undefined), [tasks, atPace]);
+  const left = workLeft(open, pace);
+  const actual = workDone(todays);
+  const summary = shutdownText(today, todays, channels, reflection, pace);
 
   const begin = () => {
     stopTimer();
@@ -132,11 +134,16 @@ export function ShutdownRitual() {
                       <span className="row">
                         <ChannelPill channelId={t.channelId} />
                         {parkLimit !== null && t.rolled >= parkLimit && <span className="meta meta-warn">goes to the backlog tonight</span>}
+                        {estimateUsedUp(t) && (
+                          <span className="meta meta-warn">
+                            {fmtMin(t.actualSec / 60)} done, past its {fmtMin(t.planned!)} estimate
+                          </span>
+                        )}
                       </span>
                     </div>
                     <div className="row">
                       <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
-                        Tomorrow
+                        {relativeDay(tomorrow, today)}
                       </button>
                       <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
                         Backlog
@@ -169,7 +176,7 @@ export function ShutdownRitual() {
             </div>
             <div>
               <strong>{actual >= 1 ? fmtMin(actual) : 'none'}</strong>
-              <span>tracked</span>
+              <span>worked</span>
             </div>
             <div>
               <strong>{tomorrowCount}</strong>

@@ -342,14 +342,14 @@ function Planner() {
   );
 
   const startFocus = () => {
-    const { tasks, timer, startTimer } = useStore.getState();
+    const { tasks, timer } = useStore.getState();
     const now = new Date();
     const first = (timer && tasks.find((t) => t.id === timer.taskId)) || focusTarget(tasksOn(tasks, ui.today), now.getHours() * 60 + now.getMinutes());
     if (!first) {
       ui.notify('Nothing left to work on today.');
       return;
     }
-    startTimer(first.id);
+    // Opening focus only shows what is next; the timer starts when you press Start.
     ui.focusOn(first.id);
   };
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_SESSION_SEC, useStore } from '../src/store';
 import { addDays, todayISO } from '../src/lib/dates';
-import { tasksOn } from '../src/lib/model';
+import { sessionsOn, tasksOn } from '../src/lib/model';
 
 const today = todayISO();
 const yesterday = addDays(today, -1);
@@ -204,14 +204,16 @@ describe('store', () => {
     expect(find(id)).toMatchObject({ start: 555, blockMin: 30 });
   });
 
-  it('draws a finished task where the work happened, not where it was planned', () => {
+  it('does not make up when the work happened for time typed in by hand', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 10, 16, 17, 31));
     const day = todayISO();
     const id = store().addTask({ title: 'Plan team offsite', date: day, planned: 60, start: 15 * 60 + 45 });
     store().updateTask(id, { actualSec: 70 * 60 });
     store().toggleDone(id);
-    expect(find(id)).toMatchObject({ start: 16 * 60 + 20, blockMin: 70 });
+    // There is no timer record of when it was done, so the planned block stays as it was.
+    expect(find(id)).toMatchObject({ start: 15 * 60 + 45, actualSec: 70 * 60 });
+    expect(find(id).blockMin ?? null).toBeNull();
   });
 
   it('remembers which tasks a day carried over', () => {
@@ -346,6 +348,55 @@ describe('store', () => {
     const result = store().autoSchedule(day, 620);
     expect(result.left).toEqual([]);
     expect(find(offsite).start).toBe(620);
+  });
+
+  it('records each timer run as a session, and finishing keeps them as they were', () => {
+    vi.useFakeTimers();
+    const at = (h: number, m: number) => vi.setSystemTime(new Date(2026, 10, 16, h, m));
+    at(8, 0);
+    const day = todayISO();
+    const id = store().addTask({ title: 'Memo', date: day, planned: 120, start: 9 * 60 });
+    for (const [from, to] of [[[9, 0], [9, 50]], [[11, 0], [12, 0]], [[13, 0], [13, 45]]] as const) {
+      at(from[0], from[1]);
+      store().startTimer(id);
+      at(to[0], to[1]);
+      store().stopTimer();
+    }
+    expect(sessionsOn(find(id), day)).toEqual([
+      { start: 540, end: 590 },
+      { start: 660, end: 720 },
+      { start: 780, end: 825 },
+    ]);
+    at(14, 45);
+    store().toggleDone(id);
+    // No block is made up: the task starts where the work started, and the sessions stay three.
+    expect(find(id)).toMatchObject({ done: true, start: 540, parts: null });
+    expect(sessionsOn(find(id), day)).toHaveLength(3);
+  });
+
+  it('replans around work already done, without erasing it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 16, 9, 0));
+    const day = todayISO();
+    store().setSettings({ lunchStart: null, planAtPace: false });
+    const memo = store().addTask({ title: 'Memo', date: day, planned: 120, start: 540 });
+    store().startTimer(memo);
+    vi.setSystemTime(new Date(2026, 10, 16, 10, 0));
+    store().stopTimer();
+    store().autoSchedule(day, 11 * 60 + 30);
+    // The hour worked stays recorded; the hour left is planned from now.
+    expect(sessionsOn(find(memo), day)).toEqual([{ start: 540, end: 600 }]);
+    expect(find(memo)).toMatchObject({ start: 690, blockMin: 60 });
+  });
+
+  it('does not count a task created today as moved on when the plan moves it', () => {
+    const fresh = store().addTask({ title: 'Blog post', date: today, planned: 180 });
+    const old = store().addTask({ title: 'Old one', date: today, planned: 60 });
+    store().updateTask(old, { createdAt: '2026-01-01T09:00:00.000Z' });
+    store().defer(fresh, addDays(today, 1), { counts: false });
+    store().defer(old, addDays(today, 1));
+    expect(find(fresh).rolled).toBe(0);
+    expect(find(old).rolled).toBe(1);
   });
 
   it('removes only the example tasks', () => {

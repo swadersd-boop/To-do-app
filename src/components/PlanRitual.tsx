@@ -5,8 +5,8 @@ import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText, copyText, deferOne, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
-import { autoSchedule as planDay, byTime, estimateUsedUp, freeMinutes, tasksOn } from '../lib/model';
-import { addDays, longDate, weekStart, weekdayName } from '../lib/dates';
+import { planDay as planBlocks, byTime, estimateUsedUp, freeMinutes, tasksOn } from '../lib/model';
+import { addDays, longDate, nextWorkday, relativeDay, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, weekSummary, workDone, workLeft } from '../lib/stats';
 import { planText } from '../lib/summary';
@@ -107,6 +107,8 @@ export function PlanRitual() {
   const meetings = byTime(open.filter((t) => t.fixed && t.start !== null));
   // Tasks the rollover sent to the backlog this morning, after moving on too many times.
   const parked = tasks.filter((t) => t.date === null && t.parkedOn === today);
+  // Tasks put off go to the next working day: Monday after a Friday, unless weekends are on.
+  const nextLabel = relativeDay(nextWorkday(today, Boolean(settings.weekendRollover)), today);
   const [deferRest, setDeferRest] = useState(true);
   /** How many tasks were typed in during this plan, so each new one goes below the last. */
   const added = useRef(0);
@@ -141,8 +143,16 @@ export function PlanRitual() {
   // What "Start my day" would do, so nothing is dropped by surprise.
   // The same rule "Start my day" uses: no more work than the day's capacity, and only the time that is left.
   const budget = Math.max(0, settings.capacityMin - doneToday);
-  const preview = useMemo(() => planDay(open, from, until, breaks, budget, usePace), [open, from, until, breaks, budget, usePace]);
+  const placements = useMemo(() => planBlocks(open, from, until, breaks, budget, usePace, today), [open, from, until, breaks, budget, usePace, today]);
+  const preview = useMemo(
+    () => Object.fromEntries(Object.entries(placements).map(([id, p]) => [id, p ? p.blocks[0].start : null])) as Record<string, number | null>,
+    [placements],
+  );
   const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
+  // Long tasks that only partly fit: how much of each gets booked today.
+  const partly = fill
+    ? open.filter((t) => placements[t.id]?.partial).map((t) => ({ task: t, minutes: placements[t.id]!.blocks.reduce((sum, b) => sum + b.end - b.start, 0) }))
+    : [];
   // The plan as it will be: what does not fit is left out of it.
   const ordered = byTime(
     open.filter((t) => !(deferRest && wontFit.includes(t))).map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)),
@@ -301,7 +311,7 @@ export function PlanRitual() {
                       </button>
                     )}
                     <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
-                      Tomorrow
+                      {nextLabel}
                     </button>
                     <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
                       Backlog
@@ -332,7 +342,9 @@ export function PlanRitual() {
                   // New work goes above the leftovers, in the order it is typed.
                   const id = addFromText(t, today, true);
                   if (id) {
-                    useStore.getState().moveTask(id, today, added.current);
+                    // Meetings sit at the top of the day by time, so count from below them.
+                    const meetingsFirst = tasksOn(useStore.getState().tasks, today).filter((x) => x.fixed && x.start !== null).length;
+                    useStore.getState().moveTask(id, today, meetingsFirst + added.current);
                     added.current += 1;
                   }
                 }}
@@ -420,7 +432,7 @@ export function PlanRitual() {
                   </button>
                 )}
                 <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
-                  Tomorrow
+                  {nextLabel}
                 </button>
                 <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
                   Backlog
@@ -442,6 +454,11 @@ export function PlanRitual() {
             <input type="checkbox" checked={fill} onChange={(e) => setFill(e.target.checked)} />
             Put the tasks on my timeline from {fmtClock(from)}, around meetings{breaks.length > 0 ? ' and lunch' : ''}
           </label>
+          {partly.length > 0 && (
+            <p className="muted">
+              {partly.map((p) => `"${p.task.title}" gets ${fmtMin(p.minutes)} today; the rest of it stays to do.`).join(' ')}
+            </p>
+          )}
           {wontFit.length > 0 && (
             <div className="wont-fit">
               <p className="row wrap wont-fit-head">
@@ -458,7 +475,7 @@ export function PlanRitual() {
                 {wontFit.map((t) => (
                   <Row key={t.id} task={t}>
                     <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
-                      Tomorrow
+                      {nextLabel}
                     </button>
                     <button type="button" className="btn btn-quiet" onClick={() => sendTo(t.id, null)}>
                       Backlog

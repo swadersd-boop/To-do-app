@@ -1,5 +1,5 @@
 import type { ISODate, Repeat, Task } from '../types';
-import { addDays, diffDays, isWeekend } from './dates';
+import { addDays, diffDays, isWeekend, toISO } from './dates';
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -13,6 +13,18 @@ export const lengthOf = (t: Task): number => t.blockMin ?? t.planned ?? DEFAULT_
 export function blocksOf(t: Task): Span[] {
   if (t.start === null) return [];
   return [{ start: t.start, end: t.start + lengthOf(t) }, ...(t.parts ?? []).map((p) => ({ start: p.start, end: p.start + p.length }))];
+}
+
+/** The timer sessions of a task that started on `date`, as minutes from midnight. Runs under a minute are left out. */
+export function sessionsOn(t: Task, date: ISODate): Span[] {
+  // A hand-edited backup could hold anything here, so only well-formed runs count.
+  return (Array.isArray(t.sessions) ? t.sessions : [])
+    .filter((x) => x && Number.isFinite(x.from) && Number.isFinite(x.to) && toISO(new Date(x.from)) === date && x.to - x.from >= 60_000)
+    .map((x) => {
+      const from = new Date(x.from);
+      const start = from.getHours() * 60 + from.getMinutes();
+      return { start, end: start + Math.round((x.to - x.from) / 60_000) };
+    });
 }
 
 /** Worked for at least as long as the estimate, and not done: the estimate needs another look. */
@@ -40,9 +52,16 @@ export function needOf(t: Task, pace: Pace = () => 1): number {
   return Math.max(15, Math.ceil((left * pace(t)) / 5) * 5);
 }
 
-/** Tasks for one day (or the backlog when `date` is null), in display order. */
+/**
+ * Tasks for one day (or the backlog when `date` is null), in display order:
+ * meetings first in time order, since their place is set by the clock, then
+ * the to-dos in the order you set, which is their priority.
+ */
 export function tasksOn(tasks: Task[], date: ISODate | null): Task[] {
-  return tasks.filter((t) => t.date === date).sort((a, b) => a.order - b.order);
+  const meeting = (t: Task) => t.fixed && t.start !== null;
+  return tasks
+    .filter((t) => t.date === date)
+    .sort((a, b) => (meeting(a) && meeting(b) ? a.start! - b.start! : meeting(a) ? -1 : meeting(b) ? 1 : a.order - b.order));
 }
 
 /**
@@ -103,6 +122,8 @@ export interface Span {
 export interface Placement {
   /** The blocks a task gets, in time order. A long task can be split around meetings and breaks. */
   blocks: Span[];
+  /** Only part of what the task needs fits today; the rest stays to do. */
+  partial?: boolean;
 }
 
 const ceil5 = (n: number) => Math.ceil(n / 5) * 5;
@@ -157,9 +178,10 @@ function flow(need: number, from: number, busy: Span[], until: number): { pieces
  * after them, so no task lower on the list jumps ahead of a higher one. A
  * task of an hour or more continues after an interruption; a shorter one
  * waits until it fits in one piece. Work under way keeps the block where it
- * was worked and only what it still needs is planned. A task that does not
- * fit before `until`, or within `budget` minutes of new work, is skipped and
- * the stream carries on with the next.
+ * was worked and only what it still needs is planned. When the clock
+ * (`until`) or the capacity (`budget` minutes of new work) runs out, a long
+ * task gets as much as still fits, at least half an hour, and everything
+ * below it drops off.
  *
  * Returns the blocks for every flexible task, or null when it did not fit.
  */
@@ -170,27 +192,46 @@ export function planDay(
   breaks: Span[] = [],
   budget = Number.POSITIVE_INFINITY,
   pace: Pace = () => 1,
+  date?: ISODate,
 ): Record<string, Placement | null> {
   const first = ceil5(from);
   const out: Record<string, Placement | null> = {};
-  const busy: Span[] = [...breaks, ...day.filter((t) => t.done || t.fixed).flatMap(blocksOf)];
-  // The part already worked stays as a record of where it happened.
-  for (const t of day.filter((x) => inProgress(x, first))) {
+  // Time already worked is taken, wherever it happened; a finished task with sessions holds those, not its plan.
+  const worked = (t: Task) => (date ? sessionsOn(t, date) : []);
+  const busy: Span[] = [
+    ...breaks,
+    ...day.flatMap(worked),
+    ...day.filter((t) => t.fixed || (t.done && worked(t).length === 0)).flatMap(blocksOf),
+  ];
+  // Without sessions to show where it happened, the part already worked keeps its planned place.
+  for (const t of day.filter((x) => inProgress(x, first) && worked(x).length === 0)) {
     const record = { start: t.start!, end: Math.min(t.start! + lengthOf(t), first) };
     busy.push(record);
     out[t.id] = { blocks: [record] };
   }
   let cursor = first;
   let used = 0;
+  // Once something does not fit, the rest of the list drops off: nothing lower jumps ahead of it.
+  let full = false;
   for (const t of day) {
     if (t.done || t.fixed) continue;
     const record = out[t.id]?.blocks ?? [];
     const need = needOf(t, pace);
-    const placed = used + need <= budget ? flow(need, cursor, busy, until) : null;
+    let placed = full ? null : used + need <= budget ? flow(need, cursor, busy, until) : null;
+    let partial = false;
+    if (!placed && !full && need >= 60) {
+      // A long task gets as much as still fits, at least half an hour, rather than nothing.
+      for (let amount = Math.floor(Math.min(need - 5, budget - used) / 5) * 5; amount >= 30 && !placed; amount -= 5) {
+        placed = flow(amount, cursor, busy, until);
+      }
+      partial = placed !== null;
+    }
     if (!placed) {
+      full = true;
       out[t.id] = record.length > 0 ? { blocks: record } : null;
       continue;
     }
+    if (partial) full = true;
     busy.push(...placed.pieces);
     used += need;
     cursor = placed.end;
@@ -199,6 +240,7 @@ export function planDay(
     const joined = last && placed.pieces[0].start === last.end;
     out[t.id] = {
       blocks: joined ? [...record.slice(0, -1), { start: last.start, end: placed.pieces[0].end }, ...placed.pieces.slice(1)] : [...record, ...placed.pieces],
+      ...(partial ? { partial: true } : {}),
     };
   }
   return out;
@@ -212,8 +254,9 @@ export function autoSchedule(
   breaks: Span[] = [],
   budget = Number.POSITIVE_INFINITY,
   pace: Pace = () => 1,
+  date?: ISODate,
 ): Record<string, number | null> {
-  const plan = planDay(day, from, until, breaks, budget, pace);
+  const plan = planDay(day, from, until, breaks, budget, pace, date);
   return Object.fromEntries(Object.entries(plan).map(([id, p]) => [id, p ? p.blocks[0].start : null]));
 }
 
@@ -246,9 +289,11 @@ export function workQueue(day: Task[], now: number): Task[] {
   // A task is placed by its next block that is not over yet; one with only past blocks counts as unscheduled.
   const nextStart = (t: Task) => blocksOf(t).find((b) => b.end > now)?.start ?? null;
   const open = day.filter((t) => !t.done && !ended(t));
+  // Work whose planned time has passed without it being done is behind, so it comes first.
+  const behind = open.filter((t) => !t.fixed && nextStart(t) === null && blocksOf(t).length > 0).sort((a, b) => a.order - b.order);
   const timed = open.filter((t) => nextStart(t) !== null).sort((a, b) => nextStart(a)! - nextStart(b)! || a.order - b.order);
-  const loose = open.filter((t) => nextStart(t) === null).sort((a, b) => a.order - b.order);
-  return [...timed, ...loose];
+  const loose = open.filter((t) => nextStart(t) === null && !behind.includes(t)).sort((a, b) => a.order - b.order);
+  return [...behind, ...timed, ...loose];
 }
 
 /** Tasks with a time by their time, then the rest in list order. */
