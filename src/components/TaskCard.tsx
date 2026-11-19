@@ -7,8 +7,9 @@ import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
 import { fmtMin } from '../lib/time';
 import { todaySec } from '../lib/stats';
+import { blocksOf } from '../lib/model';
 import { fmtClock } from '../lib/time';
-import { ChannelPill, CheckCircle, EstimateChip, useTracked } from './bits';
+import { ChannelPill, CheckCircle, EstimateChip, useNow, useTracked } from './bits';
 
 /** The card body, shared by the sortable card and the drag overlay. */
 export function TaskCardView({ task, dragging = false }: { task: Task; dragging?: boolean }) {
@@ -20,6 +21,16 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
   const { seconds, running } = useTracked(task.id, task.actualSec);
   // On a past day, the card shows the time worked on that day, not on the task in all.
   const isPastDay = useUI((s) => task.date !== null && task.date < s.today);
+  const isToday = useUI((s) => task.date === s.today);
+  // A split task under way shows when its next block starts, not the first one that is already behind.
+  const split = task.start !== null && !task.done && !task.fixed && isToday && Boolean(task.parts?.length);
+  const now = useNow(60_000, split);
+  const shownStart = (() => {
+    if (!split) return task.start;
+    const at = new Date(now);
+    const nowMin = at.getHours() * 60 + at.getMinutes();
+    return blocksOf(task).find((b) => b.end > nowMin)?.start ?? task.start;
+  })();
   const subDone = task.subtasks.filter((s) => s.done).length;
 
   return (
@@ -59,7 +70,7 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
         {task.start !== null && (
           <span className={`meta ${task.fixed ? 'meta-fixed' : ''}`} title={task.fixed ? 'Fixed time' : 'Planned time'}>
             {task.fixed ? <Pin size={12} /> : <Clock size={12} />}
-            {fmtClock(task.start)}
+            {fmtClock(shownStart ?? task.start)}
           </span>
         )}
         {task.subtasks.length > 0 && (

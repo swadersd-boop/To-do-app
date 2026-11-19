@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '../src/types';
-import { estimateUsedUp, needOf, planDay, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
+import { estimateUsedUp, planDay, focusTarget, freeMinutes, layoutBlocks, moveTask, nextOccurrence, occursOn, rollover, tasksOn, timelineRange, workQueue } from '../src/lib/model';
 import { forecast, honesty, paceOf, weekSummary, workDone, workLeft } from '../src/lib/stats';
 import { addDays, diffDays, nextWorkday, relativeDay, weekStart } from '../src/lib/dates';
 import { fmtClock, fmtMin, fmtStopwatch, parseDuration } from '../src/lib/time';
@@ -252,7 +252,20 @@ describe('summaries', () => {
     const text = planText('2026-11-16', tasks, channels, '', (t) => (t.channelId === 'w' ? 1.5 : 1));
     expect(text).toContain('1. Memo (1h 35m left of 2h) #work');
     expect(text).toContain('2. Research (past its 1h estimate)');
-    expect(text).toContain('Work: 1h 50m by your estimates, about 2h 40m at your pace');
+    // Research has no estimate of what is left, so nothing is made up for it in the total.
+    expect(text).toContain('Work: 1h 35m by your estimates, about 2h 25m at your pace');
+  });
+
+  it('names the time worked today on tasks that are not done', () => {
+    const recap = shutdownText('2026-11-16', [task({ title: 'Write report', planned: 180, actualSec: 235 * 60 })], channels, '');
+    expect(recap).toContain('- Write report: 3h 55m worked');
+  });
+
+  it('says where time on work put off to a later day went', () => {
+    const recap = shutdownText('2026-11-17', [], channels, '', undefined, { carriedSec: 79 * 60, carriedTitles: ['Prep slides'], carriedWork: [{ title: 'Prep slides', sec: 79 * 60 }] });
+    expect(recap).toContain('Moved to a later day (1):\n- Prep slides: 1h 19m worked');
+    expect(recap).toContain('Worked 1h 19m.');
+    expect(recap).not.toContain('Nothing was planned');
   });
 
   it('says what is left of a started task, and what was done before today', () => {
@@ -455,7 +468,7 @@ describe('planDay: one stream in priority order', () => {
 
   it('stops at the budget, and plans at the given pace', () => {
     // With half an hour of capacity left, an hour-long task gets that half hour today.
-    expect(planDay([task({ id: 'x', planned: 60 })], 540, 19 * 60, [], 30).x).toEqual({ blocks: [{ start: 540, end: 570 }], partial: true });
+    expect(planDay([task({ id: 'x', planned: 60 })], 540, 19 * 60, [], 30).x).toEqual({ blocks: [{ start: 540, end: 570 }], partial: true, need: 60 });
     expect(planDay([task({ id: 'y', planned: 60 })], 540, 19 * 60, [], 25).y).toBeNull();
     const deep = task({ id: 'deep', order: 0, planned: 60, channelId: 'deep' });
     const next = task({ id: 'next', order: 1, planned: 30 });
@@ -474,10 +487,20 @@ describe('planDay: one stream in priority order', () => {
     expect(spans(plan.later)).toEqual([[585, 615]]);
   });
 
-  it('gives a task past its estimate a plain quarter hour', () => {
+  it('books nothing for a task past its estimate until it has a new one, and carries on with the rest', () => {
     const over = task({ id: 'over', planned: 60, actualSec: 70 * 60 });
-    expect(needOf(over, () => 1.5)).toBe(15);
+    const next = task({ id: 'next', planned: 30 });
     expect(estimateUsedUp(over)).toBe(true);
+    const plan = planDay([over, next], 540, 19 * 60);
+    expect(plan.over).toBeNull();
+    expect(spans(plan.next)).toEqual([[540, 570]]);
+    // And it adds nothing made up to the work left.
+    expect(workLeft([over, next])).toBe(30);
+  });
+
+  it('says how much a partly booked task needs in all', () => {
+    const plan = planDay([task({ id: 'big', planned: 240 })], 540, 19 * 60, [], 120);
+    expect(plan.big).toMatchObject({ partial: true, need: 240 });
   });
 });
 

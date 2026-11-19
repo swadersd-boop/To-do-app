@@ -6,9 +6,10 @@ import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { estimateUsedUp, layoutBlocks, lengthOf, sessionsOn, tasksOn, timelineRange } from '../lib/model';
 import { nextWorkday, relativeDay, shortDate } from '../lib/dates';
-import { fmtClock, fmtMin, snap } from '../lib/time';
+import { fmtClock, snap } from '../lib/time';
 import { useNow } from './bits';
 import { moveToTomorrow, nameTasks } from '../actions';
+import { partlyText } from '../lib/summary';
 
 /** Height of one minute on the timeline, in pixels. */
 export const PX_PER_MIN = 1.5;
@@ -22,12 +23,15 @@ function Block({
   cols,
   dayStartMin,
   dayEndMin,
+  part,
 }: {
   task: Task;
   col: number;
   cols: number;
   dayStartMin: number;
   dayEndMin: number;
+  /** Which later block of a split task this is; left out for its first block. */
+  part?: number;
 }) {
   const updateTask = useStore((s) => s.updateTask);
   const color = useStore((s) => s.channels.find((c) => c.id === task.channelId)?.color);
@@ -38,8 +42,10 @@ function Block({
   const press = useRef<{ timer: number; x: number; y: number } | null>(null);
   const armed = useRef(false);
 
-  const start = gesture?.start ?? task.start!;
-  const length = gesture?.length ?? lengthOf(task);
+  // The block this element draws: the task's first block, or one of its later parts.
+  const span = part === undefined ? { start: task.start!, length: lengthOf(task) } : task.parts![part];
+  const start = gesture?.start ?? span.start;
+  const length = gesture?.length ?? span.length;
 
   // React's touch handlers are passive, so blocking the scroll during a drag needs a real listener.
   useEffect(() => {
@@ -69,7 +75,7 @@ function Block({
       } catch {
         // The pointer may already be gone.
       }
-      setGesture({ id: task.id, mode, originY: clientY, start: task.start!, length: lengthOf(task), moved: false });
+      setGesture({ id: task.id, mode, originY: clientY, start: span.start, length: span.length, moved: false });
     };
     if (e.pointerType !== 'touch') return arm(e.clientY);
     const { clientX, clientY } = e;
@@ -95,11 +101,11 @@ function Block({
     const dy = (e.clientY - gesture.originY) / PX_PER_MIN;
     if (!gesture.moved && Math.abs(dy) < 4) return;
     if (gesture.mode === 'move') {
-      const base = task.start!;
+      const base = span.start;
       const next = Math.min(dayEndMin - STEP, Math.max(dayStartMin, snap(base + dy, STEP)));
       setGesture({ ...gesture, start: next, moved: true });
     } else {
-      const base = lengthOf(task);
+      const base = span.length;
       setGesture({ ...gesture, length: Math.max(STEP, snap(base + dy, STEP)), moved: true });
     }
   };
@@ -117,21 +123,54 @@ function Block({
       if (gesture.mode === 'move') openTask(task.id);
     } else {
       const before = useStore.getState().tasks;
-      if (gesture.mode === 'move') {
-        // The whole task moves together, keeping its shape.
-        const delta = gesture.start - task.start!;
-        updateTask(task.id, { start: gesture.start, parts: task.parts?.map((p) => ({ ...p, start: p.start + delta })) ?? null });
-      } else {
-        // Resizing changes this block only. The estimate stays as it was, so Insights stays honest.
-        updateTask(task.id, task.planned === null ? { planned: gesture.length } : { blockMin: gesture.length });
-      }
-      useUI.getState().notify(gesture.mode === 'move' ? `Moved "${task.title}"` : `Resized "${task.title}"`, {
+      if (gesture.mode === 'move') shift(gesture.start - span.start);
+      else resize(gesture.length);
+      const clash = gesture.mode === 'move' ? overlaps() : '';
+      useUI.getState().notify(`${gesture.mode === 'move' ? `Moved "${task.title}".` : `Resized "${task.title}".`}${clash}`, {
         label: 'Undo',
         run: () => useStore.setState({ tasks: before }),
       });
     }
     setGesture(null);
   };
+
+  /**
+   * Moves this block and the ones after it, keeping their shape. Dragging the
+   * first block moves the whole task; a later one leaves what came before it.
+   */
+  function shift(delta: number) {
+    const from = part ?? -1;
+    updateTask(task.id, {
+      start: from < 0 ? task.start! + delta : task.start!,
+      parts: task.parts?.map((p, i) => (i >= from ? { ...p, start: p.start + delta } : p)) ?? null,
+    });
+  }
+
+  /** Resizing changes this block only. The estimate stays as it was, so Insights stays honest. */
+  function resize(next: number) {
+    if (part !== undefined) updateTask(task.id, { parts: task.parts!.map((p, i) => (i === part ? { ...p, length: next } : p)) });
+    else updateTask(task.id, task.planned === null ? { planned: next } : { blockMin: next });
+  }
+
+  /** Names what the task now sits on top of, so a move never hides a clash. */
+  function overlaps(): string {
+    const s = useStore.getState();
+    const moved = s.tasks.find((t) => t.id === task.id)!;
+    const spans = (t: Task) => [
+      { start: t.start!, end: t.start! + lengthOf(t) },
+      ...(t.parts ?? []).map((p) => ({ start: p.start, end: p.start + p.length })),
+    ];
+    // Only the blocks that moved: the ones from this block on.
+    const mine = spans(moved).slice(part === undefined ? 0 : part + 1);
+    const hits = (b: { start: number; end: number }) => mine.some((m) => m.start < b.end && b.start < m.end);
+    const names = [
+      ...breaksOf(s.settings).filter(hits).map(() => 'lunch'),
+      ...tasksOn(s.tasks, moved.date)
+        .filter((t) => t.id !== moved.id && t.start !== null && !t.done && spans(t).some(hits))
+        .map((t) => `"${t.title}"`),
+    ];
+    return names.length > 0 ? ` It now overlaps ${names.join(' and ')}.` : '';
+  }
 
   const onCancel = () => {
     cancelPress();
@@ -143,7 +182,7 @@ function Block({
   return (
     <div
       ref={el}
-      className={`block ${task.fixed ? 'is-fixed' : ''} ${task.done ? 'is-done' : ''} ${gesture ? 'is-held' : ''} ${gesture?.moved ? 'is-moving' : ''} ${length <= 30 ? 'is-short' : ''} ${length <= 15 ? 'is-tiny' : ''}`}
+      className={`block ${part !== undefined ? 'is-part' : ''} ${task.fixed ? 'is-fixed' : ''} ${task.done ? 'is-done' : ''} ${gesture ? 'is-held' : ''} ${gesture?.moved ? 'is-moving' : ''} ${length <= 30 ? 'is-short' : ''} ${length <= 15 ? 'is-tiny' : ''}`}
       style={{
         top: (start - dayStartMin) * PX_PER_MIN,
         height: Math.max(STEP, length) * PX_PER_MIN - 2,
@@ -153,7 +192,8 @@ function Block({
       }}
       role="button"
       tabIndex={0}
-      aria-label={`${task.title}, ${fmtClock(start)} to ${fmtClock(start + length)}`}
+      aria-label={`${task.title}${part !== undefined ? ', continued' : ''}, ${fmtClock(start)} to ${fmtClock(start + length)}`}
+      title={part !== undefined ? 'The same task, continued after a meeting or break. Drag to move all of it.' : undefined}
       onPointerDown={begin('move')}
       onPointerMove={onMove}
       onPointerUp={onUp}
@@ -163,11 +203,8 @@ function Block({
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault();
           const delta = e.key === 'ArrowUp' ? -STEP : STEP;
-          if (e.shiftKey) {
-            const next = Math.max(STEP, lengthOf(task) + delta);
-            updateTask(task.id, task.planned === null ? { planned: next } : { blockMin: next });
-          }
-          else updateTask(task.id, { start: Math.min(dayEndMin - STEP, Math.max(dayStartMin, task.start! + delta)) });
+          if (e.shiftKey) resize(Math.max(STEP, span.length + delta));
+          else if (span.start + delta >= dayStartMin && span.start + delta <= dayEndMin - STEP) shift(delta);
         }
         if (e.key === 'Backspace' || e.key === 'Delete') updateTask(task.id, { start: null });
       }}
@@ -175,11 +212,12 @@ function Block({
       <span className="block-title">
         {task.fixed && <Pin size={11} className="block-pin" aria-label="Fixed time" />}
         {task.title}
+        {part !== undefined && ' (continued)'}
       </span>
       <span className="block-time">
         {fmtClock(start)} to {fmtClock(start + length)}
       </span>
-      {!task.fixed && (
+      {!task.fixed && part === undefined && (
         <button
           type="button"
           className="block-x"
@@ -231,8 +269,14 @@ export function Timeline() {
   const hasWork = (t: Task) => worked.some((w) => w.task.id === t.id);
   // Once there is real work to show, a plan that is already behind us is not drawn as well.
   const stillAhead = (start: number, length: number) => day === today && start + length > nowMin;
-  const boxed = list.filter((t) => t.start !== null && (!hasWork(t) || (!t.done && stillAhead(t.start, lengthOf(t)))));
-  const partsOf = (t: Task) => (t.parts ?? []).filter((p) => !hasWork(t) || (!t.done && stillAhead(p.start, p.length)));
+  // Each block of a planned task is drawn while it is still ahead, or when no real work replaces it.
+  const shows = (t: Task, start: number, length: number) => !hasWork(t) || (!t.done && stillAhead(start, length));
+  const showsHead = (t: Task) => shows(t, t.start!, lengthOf(t));
+  /** The indexes of the later blocks still drawn. */
+  const partsOf = (t: Task) => (t.parts ?? []).flatMap((p, i) => (shows(t, p.start, p.length) ? [i] : []));
+  // A started task whose first block is behind us keeps the rest of its plan on the timeline.
+  const boxed = list.filter((t) => t.start !== null && (showsHead(t) || partsOf(t).length > 0));
+  const heads = boxed.filter(showsHead);
   // Work done here on tasks that later moved on to another day, shown where it happened.
   const traces = useMemo(
     () =>
@@ -245,8 +289,10 @@ export function Timeline() {
   const layout = useMemo(
     () =>
       layoutBlocks([
-        ...boxed.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) })),
-        ...boxed.flatMap((t) => partsOf(t).map((p, i) => ({ id: `${t.id}:part${i}`, start: p.start, end: p.start + Math.max(STEP, p.length) }))),
+        ...heads.map((t) => ({ id: t.id, start: t.start!, end: t.start! + Math.max(STEP, lengthOf(t)) })),
+        ...boxed.flatMap((t) =>
+          partsOf(t).map((i) => ({ id: `${t.id}:part${i}`, start: t.parts![i].start, end: t.parts![i].start + Math.max(STEP, t.parts![i].length) })),
+        ),
         ...worked.map((w) => ({ id: w.id, start: w.start, end: w.start + w.length })),
         ...traces.map((w) => ({ id: w.id, start: w.start, end: w.start + w.length })),
       ]),
@@ -275,8 +321,10 @@ export function Timeline() {
     // Say where it started, what only partly fits and what dropped off, and offer the obvious way out.
     const over = list.filter((t) => !t.fixed && estimateUsedUp(t));
     const part = [
-      ...partial.map((p) => `"${p.task.title}" gets ${fmtMin(p.minutes)} today, the rest stays to do.`),
-      ...(over.length > 0 ? [`${nameTasks(over)} ${over.length === 1 ? 'is' : 'are'} past the estimate and got 15 minutes; open ${over.length === 1 ? 'it' : 'them'} to say how much is left.`] : []),
+      ...partial.map(partlyText),
+      ...(over.length > 0
+        ? [`${nameTasks(over)} ${over.length === 1 ? 'is' : 'are'} past the estimate, so not on the plan. Open ${over.length === 1 ? 'it' : 'them'} to say how much is left.`]
+        : []),
     ].join(' ');
     if (left.length === 0) return notify([`Planned ${placed} task${placed === 1 ? '' : 's'} from ${fmtClock(start)}, in list order.`, part].filter(Boolean).join(' '), undo);
     notify(
@@ -397,36 +445,22 @@ export function Timeline() {
               );
             })}
             {boxed.flatMap((t) =>
-              partsOf(t).map((p, i) => {
+              partsOf(t).map((i) => {
                 const key = `${t.id}:part${i}`;
-                const width = 100 / (layout[key]?.cols ?? 1);
                 return (
-                  <div
+                  <Block
                     key={key}
-                    className={`block is-part ${t.done ? 'is-done' : ''} ${p.length <= 30 ? 'is-short' : ''}`}
-                    style={{
-                      top: (p.start - dayStartMin) * PX_PER_MIN,
-                      height: Math.max(STEP, p.length) * PX_PER_MIN - 2,
-                      left: `calc(${(layout[key]?.col ?? 0) * width}% + 2px)`,
-                      width: `calc(${width}% - 4px)`,
-                      borderLeftColor: channelColor(t.channelId) ?? 'var(--accent)',
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`${t.title}, continued, ${fmtClock(p.start)} to ${fmtClock(p.start + p.length)}`}
-                    onClick={() => useUI.getState().openTask(t.id)}
-                    onKeyDown={(e) => e.key === 'Enter' && useUI.getState().openTask(t.id)}
-                    title="The same task, continued after a meeting or break"
-                  >
-                    <span className="block-title">{t.title} (continued)</span>
-                    <span className="block-time">
-                      {fmtClock(p.start)} to {fmtClock(p.start + p.length)}
-                    </span>
-                  </div>
+                    task={t}
+                    part={i}
+                    col={layout[key]?.col ?? 0}
+                    cols={layout[key]?.cols ?? 1}
+                    dayStartMin={dayStartMin}
+                    dayEndMin={dayEndMin}
+                  />
                 );
               }),
             )}
-            {boxed.map((t) => (
+            {heads.map((t) => (
               <Block key={t.id} task={t} col={layout[t.id]?.col ?? 0} cols={layout[t.id]?.cols ?? 1} dayStartMin={dayStartMin} dayEndMin={dayEndMin} />
             ))}
             {boxed.length === 0 && (

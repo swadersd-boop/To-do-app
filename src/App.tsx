@@ -37,7 +37,7 @@ import {
 import type { ISODate, Task } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
-import { addDays, fromISO, relativeDay, todayISO, weekStart } from './lib/dates';
+import { addDays, fromISO, isWeekend, relativeDay, todayISO, weekStart } from './lib/dates';
 import { focusTarget, tasksOn } from './lib/model';
 import { isShareHash } from './lib/share';
 import { fmtStopwatch, snap } from './lib/time';
@@ -238,6 +238,8 @@ function Header({ onFocus }: { onFocus: () => void }) {
   const log = useStore((s) => s.days[ui.today]);
   const month = fromISO(ui.boardStart).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const planned = Boolean(log?.plannedAt);
+  // On a weekend with nothing on the list, planning is not the thing to do next.
+  const restDay = useStore((st) => !st.settings.weekendRollover && isWeekend(ui.today) && !st.tasks.some((t) => t.date === ui.today && !t.done));
   const closed = Boolean(log?.shutdownAt);
   // One button stands out at a time: plan in the morning, focus while you work, shut down near the end.
   const dayEnd = useStore((s) => s.settings.dayEnd);
@@ -283,7 +285,7 @@ function Header({ onFocus }: { onFocus: () => void }) {
       <span className="spacer" />
 
       <div className="top-rituals">
-        <button type="button" className={`btn ${planned ? 'is-complete' : 'btn-primary'}`} onClick={() => ui.openModal('plan')} aria-label={planned ? 'Planned' : 'Plan today'}>
+        <button type="button" className={`btn ${planned ? 'is-complete' : restDay ? '' : 'btn-primary'}`} onClick={() => ui.openModal('plan')} aria-label={planned ? 'Planned' : 'Plan today'}>
           <Sunrise size={15} />
           <span className="label">{planned ? 'Planned' : 'Plan today'}</span>
           {planned && <Check size={13} className="tick" />}
@@ -325,6 +327,8 @@ function Planner() {
   const intention = useStore((s) => s.days[ui.today]?.intention);
   const [active, setActive] = useState<Task | null>(null);
   const before = useRef<Task[] | null>(null);
+  // The day records as they were, so a cancelled drag puts back any time it moved between days.
+  const beforeDays = useRef<ReturnType<typeof useStore.getState>['days'] | null>(null);
   const overTimeline = useRef(false);
   /** The pointer is near the board's right edge with the timeline open, so it is heading there. */
   const towardTimeline = useRef(false);
@@ -402,13 +406,14 @@ function Planner() {
   const onDragStart = (e: DragStartEvent) => {
     const tasks = useStore.getState().tasks;
     before.current = tasks;
+    beforeDays.current = useStore.getState().days;
     overTimeline.current = false;
     boardScroll.current = document.querySelector('.board')?.scrollLeft ?? 0;
     setActive(tasks.find((t) => t.id === e.active.id) ?? null);
   };
 
   const restore = () => {
-    if (before.current) useStore.setState({ tasks: before.current });
+    if (before.current) useStore.setState({ tasks: before.current, ...(beforeDays.current ? { days: beforeDays.current } : {}) });
   };
 
   // While the card is over another list, move it there so the list makes room.

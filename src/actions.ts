@@ -2,6 +2,7 @@ import type { ISODate } from './types';
 import { useStore } from './store';
 import { useUI } from './ui';
 import { parseQuickAdd } from './lib/parse';
+import { fmtClock } from './lib/time';
 import { nextWorkday, relativeDay, toISO } from './lib/dates';
 
 /** Creates a task from one typed line. Returns its id, or null for an empty title. */
@@ -11,6 +12,15 @@ export function addFromText(text: string, fallbackDate: ISODate | null, atTop = 
   if (!parsed.title) return null;
   const store = useStore.getState();
   const date = parsed.date === undefined ? fallbackDate : parsed.date;
+  // The same meeting at the same time is already there, for example from a repeating series.
+  const twin =
+    parsed.start !== null && date !== null
+      ? store.tasks.find((t) => t.date === date && t.fixed && t.start === parsed.start && t.title.trim().toLowerCase() === parsed.title.trim().toLowerCase())
+      : undefined;
+  if (twin) {
+    notify(`"${twin.title}" at ${fmtClock(twin.start!)} is already on ${relativeDay(date!, today).toLowerCase() === 'today' ? 'today' : relativeDay(date!, today)}.`);
+    return null;
+  }
   const id = store.addTask(
     {
       title: parsed.title,
@@ -58,6 +68,7 @@ export function moveToTomorrow(ids: string[], prefix = ''): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
+  const beforeDays = store.days;
   const target = nextWorkday(today, Boolean(store.settings.weekendRollover));
   // A task added today and moved by the plan has not really moved on yet.
   const createdToday = (id: string) => {
@@ -74,7 +85,7 @@ export function moveToTomorrow(ids: string[], prefix = ''): void {
   ]
     .filter(Boolean)
     .join(' ');
-  notify(message, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
+  notify(message, { label: 'Undo', run: () => useStore.setState({ tasks: before, days: beforeDays }) });
 }
 
 /** Puts one task off to tomorrow, and says so if it went to the backlog instead. */
@@ -82,8 +93,9 @@ export function deferOne(id: string): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
+  const beforeDays = store.days;
   if (store.defer(id, nextWorkday(today, Boolean(store.settings.weekendRollover))) === 'backlog') {
     const title = before.find((t) => t.id === id)?.title ?? 'The task';
-    notify(`"${title}" went to the backlog after moving on too often.`, { label: 'Undo', run: () => useStore.setState({ tasks: before }) });
+    notify(`"${title}" went to the backlog after moving on too often.`, { label: 'Undo', run: () => useStore.setState({ tasks: before, days: beforeDays }) });
   }
 }

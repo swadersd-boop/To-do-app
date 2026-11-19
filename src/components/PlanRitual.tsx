@@ -9,7 +9,7 @@ import { planDay as planBlocks, byTime, estimateUsedUp, freeMinutes, tasksOn } f
 import { addDays, longDate, nextWorkday, relativeDay, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, weekSummary, workDone, workLeft } from '../lib/stats';
-import { planText } from '../lib/summary';
+import { partlyText, planText } from '../lib/summary';
 import { encodePlan } from '../lib/share';
 import { AddLine, ChannelPill, Dialog, EstimateChip, LoadBar } from './bits';
 import { ObjectiveList } from './Objectives';
@@ -109,6 +109,8 @@ export function PlanRitual() {
   const parked = tasks.filter((t) => t.date === null && t.parkedOn === today);
   // Tasks put off go to the next working day: Monday after a Friday, unless weekends are on.
   const nextLabel = relativeDay(nextWorkday(today, Boolean(settings.weekendRollover)), today);
+  /** The same day inside a sentence: "tomorrow", or "Monday" after a Friday. */
+  const nextName = nextLabel === 'Tomorrow' ? 'tomorrow' : nextLabel;
   const [deferRest, setDeferRest] = useState(true);
   /** How many tasks were typed in during this plan, so each new one goes below the last. */
   const added = useRef(0);
@@ -123,7 +125,7 @@ export function PlanRitual() {
   const atRealPace = pace ? workLeft(open, pace) : estimated;
   const planned = usePace ? atRealPace : estimated;
   // Work already done today comes off the day's capacity, measured as time actually spent.
-  const doneToday = workDone(todays);
+  const doneToday = workDone(todays, saved);
   const fixed = fixedTotal(open);
   const missing = open.filter((t) => t.planned === null).length;
 
@@ -148,16 +150,19 @@ export function PlanRitual() {
     () => Object.fromEntries(Object.entries(placements).map(([id, p]) => [id, p ? p.blocks[0].start : null])) as Record<string, number | null>,
     [placements],
   );
-  const wontFit = fill ? open.filter((t) => preview[t.id] === null) : [];
+  // A task past its estimate is not left out for lack of room: it waits for a new estimate.
+  const wontFit = fill ? open.filter((t) => preview[t.id] === null && !estimateUsedUp(t)) : [];
   // Long tasks that only partly fit: how much of each gets booked today.
   const partly = fill
-    ? open.filter((t) => placements[t.id]?.partial).map((t) => ({ task: t, minutes: placements[t.id]!.blocks.reduce((sum, b) => sum + b.end - b.start, 0) }))
+    ? open
+        .filter((t) => placements[t.id]?.partial)
+        .map((t) => ({ task: t, minutes: placements[t.id]!.blocks.reduce((sum, b) => sum + b.end - b.start, 0), need: placements[t.id]!.need ?? 0 }))
     : [];
   // The plan as it will be: what does not fit is left out of it.
   const ordered = byTime(
     open.filter((t) => !(deferRest && wontFit.includes(t))).map((t) => (fill && !t.fixed ? { ...t, start: preview[t.id] ?? null } : t)),
   );
-  const summary = planText(today, ordered, channels, intention, usePace);
+  const summary = planText(today, ordered, channels, intention, usePace, Object.fromEntries(partly.map((p) => [p.task.id, p.minutes])));
 
   const finish = () => {
     setDay(today, { plannedAt: new Date().toISOString(), intention: intention.trim() });
@@ -167,7 +172,7 @@ export function PlanRitual() {
     if (deferRest) return moveToTomorrow(left.map((t) => t.id), 'Day planned.');
     notify(
       `Day planned. ${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit today.`,
-      { label: 'Move to tomorrow', run: () => moveToTomorrow(left.map((t) => t.id)) },
+      { label: `Move to ${nextName}`, run: () => moveToTomorrow(left.map((t) => t.id)) },
     );
   };
 
@@ -341,7 +346,9 @@ export function PlanRitual() {
               <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => {
                   // New work goes above the leftovers, in the order it is typed.
                   const id = addFromText(t, today, true);
-                  if (id) {
+                  const typed = id ? useStore.getState().tasks.find((x) => x.id === id) : undefined;
+                  // A meeting finds its own place by its time; only to-dos take the next spot in the list.
+                  if (id && !(typed?.fixed && typed.start !== null)) {
                     // Meetings sit at the top of the day by time, so count from below them.
                     const meetingsFirst = tasksOn(useStore.getState().tasks, today).filter((x) => x.fixed && x.start !== null).length;
                     useStore.getState().moveTask(id, today, meetingsFirst + added.current);
@@ -456,7 +463,7 @@ export function PlanRitual() {
           </label>
           {partly.length > 0 && (
             <p className="muted">
-              {partly.map((p) => `"${p.task.title}" gets ${fmtMin(p.minutes)} today; the rest of it stays to do.`).join(' ')}
+              {partly.map(partlyText).join(' ')}
             </p>
           )}
           {wontFit.length > 0 && (
@@ -467,7 +474,7 @@ export function PlanRitual() {
               </span>
                 {wontFit.length > 1 && (
                   <button type="button" className="btn" onClick={() => moveToTomorrow(wontFit.map((t) => t.id))}>
-                    Move all to tomorrow
+                    Move all to {nextName}
                   </button>
                 )}
               </p>
@@ -488,7 +495,7 @@ export function PlanRitual() {
           {wontFit.length > 0 && (
             <label className="check-row">
               <input type="checkbox" checked={deferRest} onChange={(e) => setDeferRest(e.target.checked)} />
-              Move what does not fit to tomorrow when I start my day
+              Move what does not fit to {nextName} when I start my day
             </label>
           )}
           <h4>Your plan</h4>

@@ -42,8 +42,9 @@ export function inProgress(t: Task, from: number): boolean {
 
 /**
  * The minutes a task still needs on the timeline: its estimate minus what was
- * tracked, at `pace`, in 5-minute steps. A task already past its estimate gets
- * a plain quarter hour; the plan asks for a new estimate instead of guessing.
+ * tracked, at `pace`, in 5-minute steps. A task already past its estimate is
+ * not planned or counted at all (see estimateUsedUp); the quarter hour here is
+ * only a floor.
  */
 export function needOf(t: Task, pace: Pace = () => 1): number {
   if (t.planned === null) return DEFAULT_BLOCK;
@@ -91,14 +92,15 @@ export function moveTask(tasks: Task[], id: string, date: ISODate | null, index:
  * already planned for today, oldest first. Fixed commitments stay on their own
  * day: a missed meeting is not something to do tomorrow. A task that has
  * already moved on `parkAfter` times goes to the backlog instead, so stale work
- * cannot pile up. Returns the same array when nothing moved.
+ * cannot pile up, except tasks `keep` protects (work for this week's objectives).
+ * Returns the same array when nothing moved.
  */
-export function rollover(tasks: Task[], today: ISODate, parkAfter: number | null = null): Task[] {
+export function rollover(tasks: Task[], today: ISODate, parkAfter: number | null = null, keep: (t: Task) => boolean = () => false): Task[] {
   const stale = tasks
     .filter((t) => t.date !== null && t.date < today && !t.done && !t.fixed)
     .sort((a, b) => (a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : a.order - b.order));
   if (stale.length === 0) return tasks;
-  const parks = (t: Task) => parkAfter !== null && t.rolled >= parkAfter;
+  const parks = (t: Task) => parkAfter !== null && t.rolled >= parkAfter && !keep(t);
   const toToday = stale.filter((t) => !parks(t));
   const toBacklog = stale.filter(parks);
   const onToday = tasksOn(tasks, today).length;
@@ -124,6 +126,8 @@ export interface Placement {
   blocks: Span[];
   /** Only part of what the task needs fits today; the rest stays to do. */
   partial?: boolean;
+  /** For a partly booked task: the minutes it needs in all, at the plan's pace. */
+  need?: number;
 }
 
 const ceil5 = (n: number) => Math.ceil(n / 5) * 5;
@@ -216,6 +220,11 @@ export function planDay(
   for (const t of day) {
     if (t.done || t.fixed) continue;
     const record = out[t.id]?.blocks ?? [];
+    // Past its estimate, nobody knows what is left: book nothing rather than guess, and go on with the rest.
+    if (estimateUsedUp(t)) {
+      out[t.id] = record.length > 0 ? { blocks: record } : null;
+      continue;
+    }
     const need = needOf(t, pace);
     let placed = full ? null : used + need <= budget ? flow(need, cursor, busy, until) : null;
     let partial = false;
@@ -240,7 +249,7 @@ export function planDay(
     const joined = last && placed.pieces[0].start === last.end;
     out[t.id] = {
       blocks: joined ? [...record.slice(0, -1), { start: last.start, end: placed.pieces[0].end }, ...placed.pieces.slice(1)] : [...record, ...placed.pieces],
-      ...(partial ? { partial: true } : {}),
+      ...(partial ? { partial: true, need } : {}),
     };
   }
   return out;

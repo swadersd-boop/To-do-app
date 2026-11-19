@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
-import { addDays, isWeekend, todayISO, weekStart } from './lib/dates';
+import { addDays, isWeekend, toISO, todayISO, weekStart } from './lib/dates';
 import { paceOf, workDone } from './lib/stats';
-import { DEFAULT_BLOCK, lengthOf, moveTask, nextOccurrence, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
+import { DEFAULT_BLOCK, estimateUsedUp, lengthOf, moveTask, nextOccurrence, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -114,7 +114,7 @@ interface Actions {
   defer: (id: string, date: ISODate, options?: { counts?: boolean }) => 'day' | 'backlog';
   rollover: (today: ISODate) => void;
   /** Replans the flexible tasks of a day. Returns how many got a time, which did not fit, which only partly fit, and where it started. */
-  autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[]; partial: { task: Task; minutes: number }[]; start: number };
+  autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[]; partial: { task: Task; minutes: number; need: number }[]; start: number };
   clearSchedule: (date: ISODate) => void;
   removeExamples: () => void;
 
@@ -158,22 +158,92 @@ const slug = (name: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-|-$/g, '');
 
+/** Work for an open objective of this week is never parked out of sight: the week depends on it. */
+function servesObjective(s: PlannerData, today: ISODate): (t: Task) => boolean {
+  const open = new Set(s.objectives.filter((o) => !o.done && o.weekStart === weekStart(today)).map((o) => o.id));
+  return (t) => t.objectiveId != null && open.has(t.objectiveId);
+}
+
 /** No single sitting is longer than this. A timer left on overnight stops counting here. */
 export const MAX_SESSION_SEC = 8 * 3600;
 
-/** Adds the running timer's elapsed time to its task. */
-function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 'tasks' | 'timer'> {
-  if (!state.timer) return { tasks: state.tasks, timer: null };
+/**
+ * Adds the running timer's elapsed time to its task. A run that started on an
+ * earlier day than the task is now on (a timer left on overnight, or work on a
+ * task that has since moved) is booked to the day it started.
+ */
+function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 'tasks' | 'timer' | 'days'> {
+  if (!state.timer) return { tasks: state.tasks, timer: null, days: state.days };
   const { taskId, startedAt } = state.timer;
   const elapsed = Math.min(MAX_SESSION_SEC, Math.max(0, Math.round((now - startedAt) / 1000)));
   // Keep when the work happened, not only how long it took.
   const session = { from: startedAt, to: startedAt + elapsed * 1000 };
+  const task = state.tasks.find((t) => t.id === taskId);
+  const startDay = toISO(new Date(startedAt));
+  const elsewhere = Boolean(task) && task!.date !== startDay && elapsed > 0;
+  let days = state.days;
+  if (elsewhere) {
+    const log = days[startDay] ?? {};
+    const from = new Date(startedAt);
+    days = {
+      ...days,
+      [startDay]: {
+        ...log,
+        carriedSec: (log.carriedSec ?? 0) + elapsed,
+        carriedWork: elapsed >= 60 ? [...(log.carriedWork ?? []), { title: task!.title, start: from.getHours() * 60 + from.getMinutes(), sec: elapsed }] : log.carriedWork,
+      },
+    };
+  }
   return {
     tasks: state.tasks.map((t) =>
-      t.id === taskId ? { ...t, actualSec: t.actualSec + elapsed, sessions: elapsed >= 60 ? [...(t.sessions ?? []), session] : t.sessions } : t,
+      t.id === taskId
+        ? {
+            ...t,
+            actualSec: t.actualSec + elapsed,
+            sessions: elapsed >= 60 ? [...(t.sessions ?? []), session] : t.sessions,
+            ...(elsewhere ? { trackedBefore: (t.trackedBefore ?? 0) + elapsed } : {}),
+          }
+        : t,
     ),
     timer: null,
+    days,
   };
+}
+
+/**
+ * When tasks leave a day, the time worked on them there stays in that day's
+ * record, and they start the new day with nothing tracked on it yet. Tasks
+ * for which `movedOn` is true are also listed as having moved on.
+ */
+export function keepWorkOnDay(
+  before: Task[],
+  after: Task[],
+  days: Record<ISODate, DayLog>,
+  movedOn: (t: Task) => boolean = () => false,
+): { tasks: Task[]; days: Record<ISODate, DayLog> } {
+  const was = new Map(before.map((t) => [t.id, t]));
+  let out = days;
+  const tasks = after.map((t) => {
+    const old = was.get(t.id);
+    if (!old || !old.date || t.date === old.date) return t;
+    const workedSec = Math.max(0, old.actualSec - (old.trackedBefore ?? 0));
+    const counted = movedOn(old);
+    if (workedSec < 1 && !counted) return t;
+    const log = out[old.date] ?? {};
+    out = {
+      ...out,
+      [old.date]: {
+        ...log,
+        ...(counted
+          ? { carried: (log.carried ?? 0) + 1, carriedMin: (log.carriedMin ?? 0) + (old.planned ?? 0), carriedTitles: [...(log.carriedTitles ?? []), old.title] }
+          : {}),
+        carriedSec: (log.carriedSec ?? 0) + workedSec,
+        carriedWork: workedSec >= 60 ? [...(log.carriedWork ?? []), { title: old.title, start: old.start, sec: workedSec }] : log.carriedWork,
+      },
+    };
+    return { ...t, trackedBefore: t.actualSec };
+  });
+  return { tasks, days: out };
 }
 
 /**
@@ -264,7 +334,7 @@ export const useStore = create<Store>()(
                 : t,
             );
           }
-          return { tasks };
+          return keepWorkOnDay(s.tasks, tasks, s.days);
         }),
 
       deleteTask: (id) => {
@@ -280,7 +350,7 @@ export const useStore = create<Store>()(
 
       toggleDone: (id) =>
         set((s) => {
-          const settled = s.timer?.taskId === id ? settleTimer(s) : { tasks: s.tasks, timer: s.timer };
+          const settled = s.timer?.taskId === id ? settleTimer(s) : { tasks: s.tasks, timer: s.timer, days: s.days };
           const task = settled.tasks.find((t) => t.id === id);
           if (!task) return s;
           let tasks = settled.tasks;
@@ -290,7 +360,7 @@ export const useStore = create<Store>()(
             const spawned = task.nextId ? tasks.find((t) => t.id === task.nextId) : undefined;
             if (spawned && !spawned.done && spawned.actualSec === 0) tasks = tasks.filter((t) => t.id !== spawned.id);
             tasks = tasks.map((t) => (t.id === id ? { ...t, done: false, doneAt: null, nextId: null, unconfirmed: false } : t));
-            return { timer: settled.timer, tasks };
+            return { timer: settled.timer, days: settled.days, tasks };
           }
 
           const now = new Date();
@@ -314,7 +384,7 @@ export const useStore = create<Store>()(
               tasks = tasks.map((t) => (t.id === id ? { ...t, parts: null } : t));
             }
           }
-          return { timer: settled.timer, tasks };
+          return { timer: settled.timer, days: settled.days, tasks };
         }),
 
       settleCommitments: (today, nowMin) =>
@@ -330,26 +400,30 @@ export const useStore = create<Store>()(
           return { tasks: unseen.size > 0 ? tasks.map((t) => (unseen.has(t.id) ? { ...t, unconfirmed: true } : t)) : tasks };
         }),
 
-      moveTask: (id, date, index) => set((s) => ({ tasks: moveTask(s.tasks, id, date, index) })),
+      moveTask: (id, date, index) => set((s) => keepWorkOnDay(s.tasks, moveTask(s.tasks, id, date, index), s.days)),
 
-      sendTo: (id, date) => set((s) => ({ tasks: moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER) })),
+      sendTo: (id, date) => set((s) => keepWorkOnDay(s.tasks, moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER), s.days)),
 
       bringBack: (id, date) =>
-        set((s) => ({
-          tasks: moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER).map((t) => (t.id === id ? { ...t, rolled: 0, parkedOn: null } : t)),
-        })),
+        set((s) =>
+          keepWorkOnDay(
+            s.tasks,
+            moveTask(s.tasks, id, date, Number.MAX_SAFE_INTEGER).map((t) => (t.id === id ? { ...t, rolled: 0, parkedOn: null } : t)),
+            s.days,
+          ),
+        ),
 
       defer: (id, date, options) => {
         const s = get();
         const task = s.tasks.find((t) => t.id === id);
         const counts = options?.counts !== false;
         const limit = s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter;
-        const parks = counts && Boolean(task) && limit !== null && task!.rolled >= limit;
-        set({
-          tasks: moveTask(s.tasks, id, parks ? null : date, Number.MAX_SAFE_INTEGER).map((t) =>
-            t.id === id ? { ...t, rolled: t.rolled + (counts ? 1 : 0), parkedOn: parks ? date : t.parkedOn } : t,
-          ),
-        });
+        const parks = counts && Boolean(task) && limit !== null && task!.rolled >= limit && !servesObjective(s, todayISO())(task!);
+        const moved = moveTask(s.tasks, id, parks ? null : date, Number.MAX_SAFE_INTEGER).map((t) =>
+          t.id === id ? { ...t, rolled: t.rolled + (counts ? 1 : 0), parkedOn: parks ? date : t.parkedOn } : t,
+        );
+        // Putting a task off is moving on from the day it was on, and the time worked there stays there.
+        set(keepWorkOnDay(s.tasks, moved, s.days, (t) => t.id === id));
         return parks ? 'backlog' : 'day';
       },
 
@@ -357,26 +431,10 @@ export const useStore = create<Store>()(
         set((s) => {
           // Work left on Friday waits for Monday rather than filling the weekend.
           if (isWeekend(today) && !s.settings.weekendRollover) return s;
-          const tasks = rollover(s.tasks, today, s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter);
+          const tasks = rollover(s.tasks, today, s.settings.parkAfter === undefined ? 3 : s.settings.parkAfter, servesObjective(s, today));
           if (tasks === s.tasks) return s;
           // Note on each day what left it unfinished, so the record of that day stays honest.
-          const days = { ...s.days };
-          for (const before of s.tasks) {
-            const after = tasks.find((t) => t.id === before.id);
-            if (!before.date || !after || after.date === before.date) continue;
-            const log = days[before.date] ?? {};
-            const workedSec = before.actualSec - (before.trackedBefore ?? 0);
-            days[before.date] = {
-              ...log,
-              carried: (log.carried ?? 0) + 1,
-              carriedMin: (log.carriedMin ?? 0) + (before.planned ?? 0),
-              // The time worked that day stays with that day.
-              carriedSec: (log.carriedSec ?? 0) + before.actualSec - (before.trackedBefore ?? 0),
-              carriedTitles: [...(log.carriedTitles ?? []), before.title],
-              carriedWork: workedSec >= 60 ? [...(log.carriedWork ?? []), { title: before.title, start: before.start, sec: workedSec }] : log.carriedWork,
-            };
-          }
-          return { tasks, days };
+          return keepWorkOnDay(s.tasks, tasks, s.days, () => true);
         }),
 
       autoSchedule: (date, from, givenPace) => {
@@ -385,7 +443,7 @@ export const useStore = create<Store>()(
         const pace = givenPace ?? (s.settings.planAtPace !== false ? (paceOf(s.tasks) ?? undefined) : undefined);
         const day = tasksOn(s.tasks, date);
         // What has been worked today already counts against the day's capacity.
-        const budget = Math.max(0, s.settings.capacityMin - workDone(day));
+        const budget = Math.max(0, s.settings.capacityMin - workDone(day, s.days[date]));
         // Round as the scheduler does, so both agree on what is under way.
         const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 5) * 5;
         const plan = planDay(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace, date);
@@ -406,10 +464,11 @@ export const useStore = create<Store>()(
         set({ tasks: scheduled });
         return {
           placed: Object.values(plan).filter((v) => v !== null).length,
-          left: day.filter((t) => plan[t.id] === null),
+          // A task past its estimate is not "does not fit": it waits for a new estimate.
+          left: day.filter((t) => plan[t.id] === null && !estimateUsedUp(t)),
           partial: day
             .filter((t) => plan[t.id]?.partial)
-            .map((t) => ({ task: t, minutes: plan[t.id]!.blocks.reduce((sum, b) => sum + b.end - b.start, 0) })),
+            .map((t) => ({ task: t, minutes: plan[t.id]!.blocks.reduce((sum, b) => sum + b.end - b.start, 0), need: plan[t.id]!.need ?? 0 })),
           start,
         };
       },
@@ -449,7 +508,7 @@ export const useStore = create<Store>()(
       startTimer: (id) =>
         set((s) => {
           if (s.timer?.taskId === id) return s;
-          return { tasks: settleTimer(s).tasks, timer: { taskId: id, startedAt: Date.now() } };
+          return { ...settleTimer(s), timer: { taskId: id, startedAt: Date.now() } };
         }),
 
       stopTimer: (endAt) => set((s) => settleTimer(s, endAt)),

@@ -18,12 +18,20 @@ function size(t: Task): string {
 }
 
 /** The morning plan as plain text, ready to paste into a chat. */
-export function planText(date: ISODate, tasks: Task[], channels: Channel[], intention: string, pace?: (t: Task) => number): string {
+export function planText(
+  date: ISODate,
+  tasks: Task[],
+  channels: Channel[],
+  intention: string,
+  pace?: (t: Task) => number,
+  /** Minutes booked today for tasks that only partly fit. */
+  partly: Record<string, number> = {},
+): string {
   const lines = [`Plan for ${longDate(date)}`];
   if (intention.trim()) lines.push(`Focus: ${intention.trim()}`);
   lines.push('');
   tasks.forEach((t, i) =>
-    lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${size(t)}${tag(t, channels)}`),
+    lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${size(t)}${partly[t.id] ? `, ${fmtMin(partly[t.id])} of it today` : ''}${tag(t, channels)}`),
   );
   if (tasks.length === 0) lines.push('Nothing planned yet.');
   // The same measure as the plan: what the to-dos still need by their estimates, and at your pace when that differs.
@@ -36,7 +44,14 @@ export function planText(date: ISODate, tasks: Task[], channels: Channel[], inte
 }
 
 /** The end-of-day recap as plain text. */
-export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], reflection: string, pace?: (t: Task) => number): string {
+export function shutdownText(
+  date: ISODate,
+  tasks: Task[],
+  channels: Channel[],
+  reflection: string,
+  pace?: (t: Task) => number,
+  log?: { carriedSec?: number; carriedTitles?: string[]; carriedWork?: { title: string; sec: number }[] },
+): string {
   const done = tasks.filter((t) => t.done && !t.fixed);
   const open = tasks.filter((t) => !t.done);
   const lines = [`Shutdown for ${longDate(date)}`, ''];
@@ -53,13 +68,27 @@ export function shutdownText(date: ISODate, tasks: Task[], channels: Channel[], 
   if (left.length > 0) {
     if (done.length > 0) lines.push('');
     lines.push(`Not done (${left.length}):`);
-    for (const t of left) lines.push(`- ${t.title}${tag(t, channels)}`);
+    // Time spent on unfinished work is still work done today.
+    for (const t of left) lines.push(`- ${t.title}${todaySec(t) >= 60 ? `: ${fmtMin(todaySec(t) / 60)} worked` : ''}${tag(t, channels)}`);
   }
-  if (tasks.length === 0) lines.push('Nothing was planned today.');
+  // Work put off to a later day still happened today, so the recap says where that time went.
+  const movedOn = (log?.carriedWork ?? []).filter((w) => w.sec >= 60 && !tasks.some((t) => t.title === w.title));
+  if (movedOn.length > 0) {
+    lines.push('', `Moved to a later day (${movedOn.length}):`);
+    for (const w of movedOn) lines.push(`- ${w.title}: ${fmtMin(w.sec / 60)} worked`);
+  }
+  if (tasks.length === 0 && movedOn.length === 0) lines.push('Nothing was planned today.');
   // The same two numbers as the day column: work done today, and what is still left at the plan's pace.
-  const actual = workDone(tasks);
+  const actual = workDone(tasks, log);
   const undone = workLeft(tasks, pace);
   if (actual >= 1 || undone > 0) lines.push('', [actual >= 1 ? `Worked ${fmtMin(actual)}.` : '', undone > 0 ? `${fmtMin(undone)} of work left undone.` : ''].filter(Boolean).join(' '));
   if (reflection.trim()) lines.push('', `Reflection: ${reflection.trim()}`);
   return lines.join('\n');
+}
+
+/** What a partly booked task gets today, against what it needs in all. */
+export function partlyText(p: { task: Task; minutes: number; need: number }): string {
+  const byEstimate = Math.max(0, (p.task.planned ?? 0) - p.task.actualSec / 60);
+  const atPace = p.need > byEstimate + 4 ? ' at your pace' : '';
+  return `"${p.task.title}" gets ${fmtMin(p.minutes)} today of the ${fmtMin(p.need)} it needs${atPace}. The rest stays on the list.`;
 }

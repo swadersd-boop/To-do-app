@@ -8,7 +8,7 @@ import { addDays, longDate, nextWorkday, relativeDay, weekdayName } from '../lib
 import { paceOf, todaySec, workDone, workLeft } from '../lib/stats';
 import { fmtClock, fmtMin } from '../lib/time';
 import { shutdownText } from '../lib/summary';
-import { ChannelPill, CheckCircle, Dialog, DurationInput } from './bits';
+import { ChannelPill, CheckCircle, Dialog, DurationInput, EstimateChip } from './bits';
 import { Stepper } from './PlanRitual';
 
 const STEPS = ['Review', 'Reflect', 'Close'] as const;
@@ -41,8 +41,8 @@ export function ShutdownRitual() {
   const atPace = useStore((s) => s.settings.planAtPace !== false);
   const pace = useMemo(() => (atPace ? (paceOf(tasks) ?? undefined) : undefined), [tasks, atPace]);
   const left = workLeft(open, pace);
-  const actual = workDone(todays);
-  const summary = shutdownText(today, todays, channels, reflection, pace);
+  const actual = workDone(todays, saved);
+  const summary = shutdownText(today, todays, channels, reflection, pace, saved);
 
   const begin = () => {
     stopTimer();
@@ -136,11 +136,15 @@ export function ShutdownRitual() {
                         {parkLimit !== null && t.rolled >= parkLimit && <span className="meta meta-warn">goes to the backlog tonight</span>}
                         {estimateUsedUp(t) && (
                           <span className="meta meta-warn">
-                            {fmtMin(t.actualSec / 60)} done, past its {fmtMin(t.planned!)} estimate
+                            {fmtMin(t.actualSec / 60)} done, past its {fmtMin(t.planned!)} estimate. How much is left?
                           </span>
                         )}
                       </span>
                     </div>
+                    {estimateUsedUp(t) && (
+                      // The number picked is the time still needed, so tomorrow's plan has something true to go on.
+                      <EstimateChip value={null} onChange={(min) => min !== null && updateTask(t.id, { planned: Math.round(t.actualSec / 60) + min })} />
+                    )}
                     <div className="row">
                       <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
                         {relativeDay(tomorrow, today)}
@@ -171,7 +175,7 @@ export function ShutdownRitual() {
               <span>done</span>
             </div>
             <div>
-              <strong>{fmtMin(left)}</strong>
+              <strong>{left >= 1 ? fmtMin(left) : 'none'}</strong>
               <span>of work left undone</span>
             </div>
             <div>

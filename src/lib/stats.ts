@@ -1,5 +1,5 @@
 import { addDays } from './dates';
-import { needOf } from './model';
+import { estimateUsedUp, needOf } from './model';
 import type { Task } from '../types';
 
 export interface Honesty {
@@ -118,10 +118,11 @@ export function paceOf(history: Task[]): ((t: Task) => number) | null {
 /**
  * Minutes of work done on a day's to-dos: the time tracked on that day, or,
  * for a task finished without the timer, what was left of its estimate.
- * Meetings are not counted.
+ * Meetings are not counted. Pass the day's log to include time worked there
+ * on tasks that have since moved to another day.
  */
-export function workDone(day: Task[]): number {
-  return day
+export function workDone(day: Task[], log?: { carriedSec?: number }): number {
+  return (log?.carriedSec ?? 0) / 60 + day
     .filter((t) => !t.fixed)
     .reduce((sum, t) => {
       const tracked = todaySec(t) / 60;
@@ -133,5 +134,6 @@ export function workDone(day: Task[]): number {
 
 /** Minutes the open to-dos of a day still need, measured as the plan measures them. */
 export function workLeft(day: Task[], pace?: (t: Task) => number): number {
-  return day.filter((t) => !t.fixed && !t.done).reduce((sum, t) => sum + needOf(t, pace), 0);
+  // A task past its estimate adds nothing until someone says how much is left.
+  return day.filter((t) => !t.fixed && !t.done && !estimateUsedUp(t)).reduce((sum, t) => sum + needOf(t, pace), 0);
 }

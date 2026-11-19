@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_SESSION_SEC, useStore } from '../src/store';
-import { addDays, todayISO } from '../src/lib/dates';
+import { addDays, todayISO, weekStart } from '../src/lib/dates';
 import { sessionsOn, tasksOn } from '../src/lib/model';
+import { trackedOn, workDone } from '../src/lib/stats';
 
 const today = todayISO();
 const yesterday = addDays(today, -1);
@@ -267,6 +268,16 @@ describe('store', () => {
     expect(store().days[today]?.carriedWork).toEqual([{ title: 'Design onboarding', start: null, sec: 10 * 60 }]);
   });
 
+  it('never parks work for an open objective of this week', () => {
+    store().addObjective('Ship the pricing memo', weekStart(today));
+    const objective = store().objectives[0];
+    const id = store().addTask({ title: 'Draft pricing memo', date: yesterday, planned: 60 });
+    store().updateTask(id, { rolled: 5, objectiveId: objective.id });
+    store().rollover(today);
+    expect(find(id).date).toBe(today);
+    expect(store().defer(id, addDays(today, 1))).toBe('day');
+  });
+
   it('parks a task in the backlog after it has moved on three times', () => {
     const id = store().addTask({ title: 'Stale idea', date: yesterday, planned: 30 });
     store().updateTask(id, { rolled: 3 });
@@ -372,6 +383,51 @@ describe('store', () => {
     // No block is made up: the task starts where the work started, and the sessions stay three.
     expect(find(id)).toMatchObject({ done: true, start: 540, parts: null });
     expect(sessionsOn(find(id), day)).toHaveLength(3);
+  });
+
+  it('keeps time worked today on today when the task is put off or moved', () => {
+    vi.useFakeTimers();
+    const at = (h: number, m: number) => vi.setSystemTime(new Date(2026, 10, 17, h, m));
+    at(10, 30);
+    const day = todayISO();
+    const next = addDays(day, 1);
+    const slides = store().addTask({ title: 'Prep slides', date: day, planned: 120 });
+    const memo = store().addTask({ title: 'Memo', date: day, planned: 60 });
+    const done = store().addTask({ title: 'Done', date: day, planned: 30 });
+    store().startTimer(slides);
+    at(11, 49);
+    store().stopTimer();
+    store().startTimer(memo);
+    at(12, 19);
+    store().stopTimer();
+    store().startTimer(done);
+    at(12, 49);
+    store().toggleDone(done);
+    const workedToday = () => workDone(tasksOn(store().tasks, day), store().days[day]);
+    expect(workedToday()).toBe(79 + 30 + 30);
+
+    store().defer(slides, next);
+    store().moveTask(memo, null, 0);
+    // The time stays where it happened, and nothing is counted twice on the next day.
+    expect(workedToday()).toBe(139);
+    expect(workDone(tasksOn(store().tasks, next), store().days[next])).toBe(0);
+    expect(store().days[day]).toMatchObject({ carried: 1, carriedTitles: ['Prep slides'] });
+    expect(store().days[day].carriedSec).toBe((79 + 30) * 60);
+  });
+
+  it('counts a timer left running overnight on the day it started', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 23, 17, 0));
+    const monday = todayISO();
+    const id = store().addTask({ title: 'Quick fix', date: monday, planned: 30 });
+    store().startTimer(id);
+    vi.setSystemTime(new Date(2026, 10, 24, 8, 30));
+    const tuesday = todayISO();
+    store().rollover(tuesday);
+    store().stopTimer(new Date(2026, 10, 23, 18, 0).getTime());
+    expect(find(id).date).toBe(tuesday);
+    expect(workDone(tasksOn(store().tasks, tuesday), store().days[tuesday])).toBe(0);
+    expect(trackedOn(tasksOn(store().tasks, monday), store().days[monday])).toBe(60);
   });
 
   it('replans around work already done, without erasing it', () => {

@@ -5,7 +5,7 @@ import type { ISODate } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText } from '../actions';
-import { occursOn, tasksOn } from '../lib/model';
+import { estimateUsedUp, occursOn, tasksOn } from '../lib/model';
 import { isWeekend, relativeDay, shortDate, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, trackedOn, workDone, workLeft } from '../lib/stats';
@@ -39,12 +39,16 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const upcoming = [...open, ...ghosts];
   // What the day's open to-dos still need, measured like the plan: estimate minus time done, at your pace.
   const left = workLeft(upcoming, pace);
-  const worked = isToday ? workDone(list) : 0;
+  const worked = isToday ? workDone(list, log) : 0;
   const planned = left + worked;
   const fixed = fixedTotal(upcoming);
   const doneCount = list.filter((t) => t.done && !t.fixed).length;
   const tracked = trackedOn(list, log);
   const over = planned - capacity;
+  // Once every to-do has its time, what does not fit was booked in part on purpose: it carries over, it is not a warning.
+  const todo = open.filter((t) => !t.fixed && !estimateUsedUp(t));
+  const booked = isToday && todo.length > 0 && todo.every((t) => t.start !== null);
+  const needEstimate = isToday ? open.filter(estimateUsedUp).length : 0;
   const empty = list.length === 0 && ghosts.length === 0;
 
   const { setNodeRef, isOver } = useDroppable({ id: dayContainerId(date), data: { type: 'list', date } });
@@ -67,9 +71,9 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
       </button>
 
       <div className="col-load">
-        <LoadBar planned={planned} capacity={capacity} />
+        <LoadBar planned={booked ? Math.min(planned, capacity) : planned} capacity={capacity} />
         <span
-          className={`col-load-text ${over > 0 ? 'is-over' : ''}`}
+          className={`col-load-text ${over > 0 && !booked ? 'is-over' : ''}`}
           title={isPast && (log?.carriedSec ?? 0) >= 60 ? `Tracked time includes ${fmtMin(log!.carriedSec! / 60)} on tasks that moved on to a later day.` : undefined}
         >
           {empty
@@ -79,12 +83,15 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
                 ? 'Not planned'
                 : `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} tracked` : ''}`
               : over > 0
-                ? `${fmtMin(left)} left, ${fmtMin(over)} more than fits`
+                ? booked
+                  ? `${fmtMin(left)} left, ${fmtMin(over)} carries over`
+                  : `${fmtMin(left)} left, ${fmtMin(over)} more than fits`
                 : worked >= 1
                   ? `${fmtMin(left)} left · ${fmtMin(worked)} worked of ${fmtMin(capacity)}`
                   : `${fmtMin(left)} of ${fmtMin(capacity)}`}
           {!isPast && fixed > 0 && ` · ${fmtMin(fixed)} fixed`}
           {!isPast && doneCount > 0 && worked < 1 && ` · ${doneCount} done`}
+          {needEstimate > 0 && ` · ${needEstimate} past ${needEstimate === 1 ? 'its' : 'their'} estimate`}
           {isPast && (log?.carried ?? 0) > 0 && ` · ${log!.carried} moved on`}
         </span>
       </div>
