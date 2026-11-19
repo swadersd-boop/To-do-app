@@ -3,7 +3,8 @@ import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, isWeekend, toISO, todayISO, weekStart } from './lib/dates';
 import { paceOf, workDone } from './lib/stats';
-import { DEFAULT_BLOCK, estimateUsedUp, lengthOf, moveTask, nextOccurrence, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
+import type { Meeting } from './lib/ics';
+import { DEFAULT_BLOCK, estimateUsedUp, lengthOf, moveTask, nextOccurrence, occursOn, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -96,6 +97,8 @@ export function seed(today: ISODate): PlannerData {
 interface Actions {
   addTask: (input: NewTask, atTop?: boolean) => string;
   updateTask: (id: string, patch: Partial<Omit<Task, 'id'>>) => void;
+  /** Records how many minutes a task still needs, keeping its original estimate. */
+  setLeft: (id: string, min: number) => void;
   deleteTask: (id: string) => Task | null;
   restoreTask: (task: Task) => void;
   toggleDone: (id: string) => void;
@@ -117,6 +120,12 @@ interface Actions {
   autoSchedule: (date: ISODate, from: number, pace?: Pace) => { placed: number; left: Task[]; partial: { task: Task; minutes: number; need: number }[]; start: number };
   clearSchedule: (date: ISODate) => void;
   removeExamples: () => void;
+  /**
+   * Brings meetings from a calendar file onto the board for days `from` to
+   * `to`: new ones are added, changed ones updated, and ones that are gone from
+   * the calendar removed (unless they were worked on or finished).
+   */
+  importCalendar: (meetings: Meeting[], from: ISODate, to: ISODate, source: string, name: string) => { added: number; updated: number; removed: number };
 
   addSubtask: (taskId: string, title: string) => void;
   updateSubtask: (taskId: string, subId: string, patch: Partial<Subtask>) => void;
@@ -172,9 +181,10 @@ export const MAX_SESSION_SEC = 8 * 3600;
  * earlier day than the task is now on (a timer left on overnight, or work on a
  * task that has since moved) is booked to the day it started.
  */
-function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 'tasks' | 'timer' | 'days'> {
+function settleTimer(state: PlannerData, endAt?: number): Pick<PlannerData, 'tasks' | 'timer' | 'days'> {
   if (!state.timer) return { tasks: state.tasks, timer: null, days: state.days };
   const { taskId, startedAt } = state.timer;
+  const now = endAt ?? overnightEnd(startedAt, Date.now(), state.settings.dayEnd);
   const elapsed = Math.min(MAX_SESSION_SEC, Math.max(0, Math.round((now - startedAt) / 1000)));
   // Keep when the work happened, not only how long it took.
   const session = { from: startedAt, to: startedAt + elapsed * 1000 };
@@ -211,6 +221,19 @@ function settleTimer(state: PlannerData, now = Date.now()): Pick<PlannerData, 't
 }
 
 /**
+ * Where a timer stopped without a given time ends. Within its own day, now. A
+ * timer that ran into the next day is never charged for the night: it ends at
+ * the end of the working day it started on, or books nothing if it was started
+ * after that. The timer question asks for the real time before it gets here.
+ */
+export function overnightEnd(startedAt: number, now: number, dayEnd: number): number {
+  if (toISO(new Date(startedAt)) === toISO(new Date(now))) return now;
+  const end = new Date(startedAt);
+  end.setHours(dayEnd, 0, 0, 0);
+  return Math.min(now, Math.max(startedAt, end.getTime()));
+}
+
+/**
  * When tasks leave a day, the time worked on them there stays in that day's
  * record, and they start the new day with nothing tracked on it yet. Tasks
  * for which `movedOn` is true are also listed as having moved on.
@@ -225,10 +248,13 @@ export function keepWorkOnDay(
   let out = days;
   const tasks = after.map((t) => {
     const old = was.get(t.id);
-    if (!old || !old.date || t.date === old.date) return t;
+    if (!old || t.date === old.date) return t;
+    // A timebox belongs to the day it was made for.
+    const cleared = t.fixed ? t : { ...t, blockMin: null, parts: null };
+    if (!old.date) return cleared;
     const workedSec = Math.max(0, old.actualSec - (old.trackedBefore ?? 0));
     const counted = movedOn(old);
-    if (workedSec < 1 && !counted) return t;
+    if (workedSec < 1 && !counted) return cleared;
     const log = out[old.date] ?? {};
     out = {
       ...out,
@@ -241,7 +267,7 @@ export function keepWorkOnDay(
         carriedWork: workedSec >= 60 ? [...(log.carriedWork ?? []), { title: old.title, start: old.start, sec: workedSec }] : log.carriedWork,
       },
     };
-    return { ...t, trackedBefore: t.actualSec };
+    return { ...cleared, trackedBefore: t.actualSec };
   });
   return { tasks, days: out };
 }
@@ -309,7 +335,9 @@ export const useStore = create<Store>()(
           // A commitment without a time is no longer fixed.
           const merge = (t: Task): Task => {
             // A new estimate replaces a shortened timebox.
-            const next = { ...t, ...(patch.planned !== undefined && patch.blockMin === undefined ? { blockMin: null } : {}), ...patch };
+            // A new estimate replaces a shortened timebox, and any answer to "how much is left?".
+            const fresh = patch.planned !== undefined ? { ...(patch.blockMin === undefined ? { blockMin: null } : {}), ...(patch.left === undefined ? { left: null } : {}) } : {};
+            const next = { ...t, ...fresh, ...patch };
             // Without a time there are no later blocks either.
             const timed = next.start === null ? { ...next, parts: null } : next;
             return timed.fixed && timed.start === null ? { ...timed, fixed: false } : timed;
@@ -336,6 +364,9 @@ export const useStore = create<Store>()(
           }
           return keepWorkOnDay(s.tasks, tasks, s.days);
         }),
+
+      setLeft: (id, min) =>
+        set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? { ...t, left: { min, atSec: t.actualSec }, blockMin: null } : t)) })),
 
       deleteTask: (id) => {
         const task = get().tasks.find((t) => t.id === id) ?? null;
@@ -443,7 +474,8 @@ export const useStore = create<Store>()(
         const pace = givenPace ?? (s.settings.planAtPace !== false ? (paceOf(s.tasks) ?? undefined) : undefined);
         const day = tasksOn(s.tasks, date);
         // What has been worked today already counts against the day's capacity.
-        const budget = Math.max(0, s.settings.capacityMin - workDone(day, s.days[date]));
+        // Whole minutes, so a stray second of tracked time cannot push a task under the half-hour floor.
+        const budget = Math.max(0, Math.round(s.settings.capacityMin - workDone(day, s.days[date])));
         // Round as the scheduler does, so both agree on what is under way.
         const start = Math.ceil(Math.max(from, s.settings.dayStart * 60) / 5) * 5;
         const plan = planDay(day, start, s.settings.dayEnd * 60, breaksOf(s.settings), budget, pace, date);
@@ -477,6 +509,48 @@ export const useStore = create<Store>()(
         set((s) => ({
           tasks: s.tasks.map((t) => (t.date === date && !t.done && !t.fixed && t.start !== null ? { ...t, start: null, blockMin: null, parts: null } : t)),
         })),
+
+      importCalendar: (meetings, from, to, source, name) => {
+        const s = get();
+        let tasks = s.tasks;
+        let added = 0;
+        let updated = 0;
+        const same = (t: Task, m: Meeting) => t.fixed && t.start === m.start && t.title.trim().toLowerCase() === m.title.trim().toLowerCase();
+        const keys = new Set(meetings.map((m) => m.key));
+        for (const m of meetings) {
+          const mine = tasks.find((t) => t.calendarKey === m.key);
+          if (mine) {
+            if (mine.done) continue;
+            const changed = mine.title !== m.title || mine.date !== m.date || mine.start !== m.start || mine.planned !== m.length;
+            if (!changed) continue;
+            updated++;
+            tasks = tasks.map((t) =>
+              t.id === mine.id
+                ? { ...t, title: m.title, date: m.date, start: m.start, planned: m.length, blockMin: null, fixed: true, order: t.date === m.date ? t.order : nextOrder(tasks, m.date) }
+                : t,
+            );
+            continue;
+          }
+          // Already typed in by hand, or covered by a repeating meeting in Kalm: link to it rather than add a copy.
+          const typed = tasks.find((t) => !t.calendarKey && t.date === m.date && same(t, m));
+          if (typed) {
+            tasks = tasks.map((t) => (t.id === typed.id ? { ...t, calendarKey: m.key, planned: m.length } : t));
+            continue;
+          }
+          if (tasks.some((t) => same(t, m) && occursOn(t, m.date))) continue;
+          const task: Task = { ...makeTask({ title: m.title, date: m.date, planned: m.length, start: m.start, fixed: true }, nextOrder(tasks, m.date)), calendarKey: m.key };
+          tasks = [...tasks, task];
+          added++;
+        }
+        // Gone from the calendar: cancelled or moved out of range. Work already done on it stays.
+        const gone = tasks.filter(
+          (t) =>
+            t.calendarKey?.startsWith(`${source}|`) && !keys.has(t.calendarKey) && t.date !== null && t.date >= from && t.date <= to && !t.done && t.actualSec === 0,
+        );
+        tasks = tasks.filter((t) => !gone.includes(t));
+        set({ tasks, settings: { ...s.settings, calendarImport: { name, at: new Date().toISOString() } } });
+        return { added, updated, removed: gone.length };
+      },
 
       removeExamples: () =>
         set((s) => {

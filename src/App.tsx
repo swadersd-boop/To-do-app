@@ -35,7 +35,7 @@ import {
   Sunrise,
 } from 'lucide-react';
 import type { ISODate, Task } from './types';
-import { useStore } from './store';
+import { keepWorkOnDay, useStore } from './store';
 import { useUI } from './ui';
 import { addDays, fromISO, isWeekend, relativeDay, todayISO, weekStart } from './lib/dates';
 import { focusTarget, tasksOn } from './lib/model';
@@ -478,7 +478,20 @@ function Planner() {
     if (to >= 0 && to !== from) store.moveTask(id, task.date, to);
     // A card that ends up back on its own day keeps its timebox.
     if (task.date === original.date && original.start !== null) useStore.getState().updateTask(id, { start: original.start });
+    // Passing over other days on the way may have touched their records. Write the record once, for where it landed:
+    // dragging unfinished work from today or earlier to a later day (or the backlog) is moving on, like "put off".
+    if (beforeDays.current && before.current) {
+      const today = useUI.getState().today;
+      const now = useStore.getState().tasks;
+      if (task.date === original.date) {
+        useStore.setState({ days: beforeDays.current, tasks: now.map((t) => (t.id === id ? { ...t, trackedBefore: original.trackedBefore } : t)) });
+      } else {
+        const movedOn = (t: Task) => t.id === id && !t.done && t.date !== null && t.date <= today && (task.date === null || task.date > t.date);
+        useStore.setState(keepWorkOnDay(before.current, now, beforeDays.current, movedOn));
+      }
+    }
     before.current = null;
+    beforeDays.current = null;
     // Keep the moved card in sight, which matters most when moving it with the keyboard.
     requestAnimationFrame(() => document.querySelector(`[data-task-id="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
   };

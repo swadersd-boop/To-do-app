@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_SESSION_SEC, useStore } from '../src/store';
 import { addDays, todayISO, weekStart } from '../src/lib/dates';
-import { sessionsOn, tasksOn } from '../src/lib/model';
-import { trackedOn, workDone } from '../src/lib/stats';
+import { estimateUsedUp, needOf, sessionsOn, tasksOn } from '../src/lib/model';
+import { workDone } from '../src/lib/stats';
 
 const today = todayISO();
 const yesterday = addDays(today, -1);
@@ -427,7 +427,76 @@ describe('store', () => {
     store().stopTimer(new Date(2026, 10, 23, 18, 0).getTime());
     expect(find(id).date).toBe(tuesday);
     expect(workDone(tasksOn(store().tasks, tuesday), store().days[tuesday])).toBe(0);
-    expect(trackedOn(tasksOn(store().tasks, monday), store().days[monday])).toBe(60);
+    expect(workDone(tasksOn(store().tasks, monday), store().days[monday])).toBe(60);
+  });
+
+  it('does not lose a task to a stray second of tracked time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 16, 16, 30));
+    const day = todayISO();
+    store().setSettings({ capacityMin: 360, dayEnd: 19 });
+    const report = store().addTask({ title: 'Report', date: day, planned: 330 });
+    store().updateTask(report, { actualSec: 330 * 60 + 1, done: true });
+    const id = store().addTask({ title: 'Design', date: day, planned: 30 });
+    const { left } = store().autoSchedule(day, 16 * 60 + 30);
+    expect(left).toHaveLength(0);
+    expect(find(id).start).toBe(16 * 60 + 30);
+  });
+
+  it('keeps the original estimate when you say how much is left', () => {
+    const id = store().addTask({ title: 'Write report', date: today, planned: 180 });
+    store().updateTask(id, { actualSec: 230 * 60 });
+    expect(estimateUsedUp(find(id))).toBe(true);
+    store().setLeft(id, 60);
+    // The estimate stays 3h for Insights and the recap; the plan books the hour you said, not more.
+    expect(find(id).planned).toBe(180);
+    expect(estimateUsedUp(find(id))).toBe(false);
+    expect(needOf(find(id), () => 1.5)).toBe(60);
+    store().updateTask(id, { actualSec: 260 * 60 });
+    expect(needOf(find(id))).toBe(30);
+    // A new estimate replaces the answer.
+    store().updateTask(id, { planned: 300 });
+    expect(find(id).left ?? null).toBeNull();
+  });
+
+  it('never books the night: an overnight timer stopped without a time ends at the end of the working day', () => {
+    vi.useFakeTimers();
+    store().setSettings({ dayEnd: 19 });
+    vi.setSystemTime(new Date(2026, 10, 23, 17, 5));
+    const id = store().addTask({ title: 'Write report', date: todayISO(), planned: 180 });
+    store().startTimer(id);
+    vi.setSystemTime(new Date(2026, 10, 24, 8, 30));
+    store().stopTimer();
+    expect(find(id).actualSec).toBe((19 * 60 - (17 * 60 + 5)) * 60);
+    // Started after the working day: nothing is booked without asking.
+    vi.setSystemTime(new Date(2026, 10, 24, 21, 0));
+    store().startTimer(id);
+    vi.setSystemTime(new Date(2026, 10, 25, 8, 0));
+    store().startTimer(id);
+    expect(find(id).actualSec).toBe((19 * 60 - (17 * 60 + 5)) * 60);
+  });
+
+  it('imports calendar meetings once, updates them, and removes ones that were cancelled', () => {
+    const d1 = today;
+    const d2 = addDays(today, 1);
+    const typed = store().addTask({ title: 'Standup', date: d1, planned: 15, start: 570, fixed: true });
+    const first = [
+      { key: 'work|standup|1', title: 'Standup', date: d1, start: 570, length: 15 },
+      { key: 'work|call|1', title: 'Client call', date: d1, start: 840, length: 60 },
+      { key: 'work|review|1', title: 'Review', date: d2, start: 600, length: 30 },
+    ];
+    expect(store().importCalendar(first, d1, d2, 'work', 'work.ics')).toEqual({ added: 2, updated: 0, removed: 0 });
+    // The standup typed by hand is linked, not copied.
+    expect(store().tasks.filter((t) => t.title === 'Standup')).toHaveLength(1);
+    expect(find(typed).calendarKey).toBe('work|standup|1');
+    // Importing the same file again changes nothing.
+    expect(store().importCalendar(first, d1, d2, 'work', 'work.ics')).toEqual({ added: 0, updated: 0, removed: 0 });
+    // The call moved to 15:00 and the review was cancelled.
+    const second = [first[0], { ...first[1], start: 900 }];
+    expect(store().importCalendar(second, d1, d2, 'work', 'work.ics')).toEqual({ added: 0, updated: 1, removed: 1 });
+    expect(store().tasks.find((t) => t.title === 'Client call')).toMatchObject({ start: 900, fixed: true, planned: 60 });
+    expect(store().tasks.some((t) => t.title === 'Review')).toBe(false);
+    expect(store().settings.calendarImport?.name).toBe('work.ics');
   });
 
   it('replans around work already done, without erasing it', () => {

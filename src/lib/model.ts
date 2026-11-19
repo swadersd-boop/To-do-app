@@ -27,9 +27,16 @@ export function sessionsOn(t: Task, date: ISODate): Span[] {
     });
 }
 
-/** Worked for at least as long as the estimate, and not done: the estimate needs another look. */
+/** Minutes still to do by your own numbers: what you said was left, or the estimate minus the time tracked. Null without an estimate. */
+export function leftOf(t: Task): number | null {
+  if (t.left) return Math.max(0, t.left.min - (t.actualSec - t.left.atSec) / 60);
+  return t.planned === null ? null : Math.max(0, t.planned - t.actualSec / 60);
+}
+
+/** Worked for at least as long as the estimate (or what you said was left), and not done: it needs another look. */
 export function estimateUsedUp(t: Task): boolean {
-  return !t.done && t.planned !== null && t.actualSec / 60 >= t.planned;
+  const left = leftOf(t);
+  return !t.done && left !== null && left <= 0;
 }
 
 /** A multiplier on a task's estimate, for planning at the pace history shows. */
@@ -47,10 +54,12 @@ export function inProgress(t: Task, from: number): boolean {
  * only a floor.
  */
 export function needOf(t: Task, pace: Pace = () => 1): number {
-  if (t.planned === null) return DEFAULT_BLOCK;
-  const left = t.planned - t.actualSec / 60;
+  const left = leftOf(t);
+  if (left === null) return DEFAULT_BLOCK;
   if (left <= 0) return 15;
-  return Math.max(15, Math.ceil((left * pace(t)) / 5) * 5);
+  // What you said is left is already your honest guess, so pace does not scale it again.
+  const scale = t.left ? 1 : pace(t);
+  return Math.max(15, Math.ceil((left * scale) / 5) * 5);
 }
 
 /**

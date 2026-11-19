@@ -6,6 +6,7 @@ import type { Task, Timer } from '../types';
 import { fmtClock, fmtMin, parseDuration } from '../lib/time';
 import { parseQuickAdd, unreadTokens } from '../lib/parse';
 import { relativeDay, todayISO } from '../lib/dates';
+import { leftOf } from '../lib/model';
 import { useUI } from '../ui';
 
 /** Re-renders on an interval while `active`, returning the current time. */
@@ -392,6 +393,8 @@ export interface TimerAsk {
   stopAt: number;
   /** A meeting that started while the timer ran, if that is the reason for asking. */
   meeting: Task | null;
+  /** The timer was started on an earlier day: ask when it really stopped, before anything is booked. */
+  overnight?: boolean;
 }
 
 /**
@@ -400,6 +403,14 @@ export interface TimerAsk {
  * "Still working" it asks again an hour later, or at the next meeting.
  */
 export function timerAsk(timer: Timer, task: Task, tasks: Task[]): TimerAsk {
+  if (todayISO(new Date(timer.startedAt)) !== todayISO()) {
+    // Left on overnight. Suggest the time the task should have taken, within that day's working hours.
+    const dayEnd = new Date(timer.startedAt);
+    dayEnd.setHours(useStore.getState().settings.dayEnd, 0, 0, 0);
+    const guess = timer.startedAt + Math.max(15, Math.ceil((leftOf(task) ?? 30) / 5) * 5) * 60_000;
+    const stopAt = dayEnd.getTime() > timer.startedAt ? Math.min(guess, dayEnd.getTime()) : guess;
+    return { at: timer.startedAt, stopAt, meeting: null, overnight: true };
+  }
   const since = Math.max(timer.startedAt, timer.checkedAt ?? 0);
   const startOfDay = new Date(timer.startedAt);
   startOfDay.setHours(0, 0, 0, 0);
@@ -423,12 +434,44 @@ export function TimerQuestion() {
   const tasks = useStore((s) => s.tasks);
   const task = tasks.find((t) => t.id === timer?.taskId);
   const now = useNow(20_000, Boolean(timer));
+  const [typed, setTyped] = useState<string | null>(null);
   if (!timer || !task) return null;
   const ask = timerAsk(timer, task, tasks);
   if (now < ask.at) return null;
   const { confirmTimer, stopTimer } = useStore.getState();
   const stopClock = new Date(ask.stopAt);
   const stopLabel = fmtClock(stopClock.getHours() * 60 + stopClock.getMinutes());
+  if (ask.overnight) {
+    const started = new Date(timer.startedAt);
+    const startMin = started.getHours() * 60 + started.getMinutes();
+    const value = typed ?? `${String(stopClock.getHours()).padStart(2, '0')}:${String(stopClock.getMinutes()).padStart(2, '0')}`;
+    // The time typed is on the day the timer started; it cannot be before the start or after now.
+    const endAt = (() => {
+      const [h, m] = value.split(':').map(Number);
+      if (!Number.isFinite(h) || !Number.isFinite(m)) return ask.stopAt;
+      const at = new Date(timer.startedAt);
+      at.setHours(h, m, 0, 0);
+      return Math.min(now, Math.max(timer.startedAt, at.getTime()));
+    })();
+    const day = relativeDay(todayISO(started), todayISO());
+    return (
+      <div className="timer-question" role="alert">
+        <span>
+          The timer on <strong>{task.title}</strong> is still running from {day.toLowerCase() === 'yesterday' ? 'yesterday' : day} at {fmtClock(startMin)}.
+          When did you stop?
+        </span>
+        <span className="row wrap">
+          <input className="field time-field" type="time" aria-label="When you stopped" value={value} onChange={(e) => setTyped(e.target.value)} />
+          <button type="button" className="btn btn-primary" onClick={() => stopTimer(endAt)}>
+            Stop then ({fmtMin((endAt - timer.startedAt) / 60_000)})
+          </button>
+          <button type="button" className="btn btn-quiet" onClick={() => stopTimer(timer.startedAt)}>
+            Discard this run
+          </button>
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="timer-question" role="alert">
       <span>

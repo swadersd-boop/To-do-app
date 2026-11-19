@@ -29,7 +29,7 @@ const titles = async (locator) => (await locator.allInnerTexts()).map((t) => t.s
 // 1. Restoring brings the data up to today at once.
 let { ctx, page } = await open('2026-11-16T08:40:00+01:00');
 await page.getByRole('button', { name: 'Settings', exact: true }).click();
-await page.locator('input[type=file]').setInputFiles(FIXTURE);
+await page.locator('input[type=file][accept*="json"]').setInputFiles(FIXTURE);
 await page.locator('.toast', { hasText: 'Backup restored' }).waitFor();
 await page.keyboard.press('Escape');
 await page.locator('.backdrop').waitFor({ state: 'detached' });
@@ -39,7 +39,7 @@ assert.deepEqual((await titles(today.locator('.card-wrap'))).sort(), ['Design on
 // 2. Friday is an honest record: what got done, and what moved on.
 await page.getByRole('button', { name: 'Previous week' }).click();
 const friday = page.locator('.col[data-date="2026-11-13"]');
-assert.match(await friday.locator('.col-load-text').innerText(), /4 done · .* tracked · 2 moved on/);
+assert.match(await friday.locator('.col-load-text').innerText(), /4 done · .* worked · 2 moved on/);
 assert.deepEqual(await titles(friday.locator('.card-moved .card-title')), ['Design onboarding flow', 'Draft pricing memo']);
 assert.equal(await friday.locator('.add-line').count(), 0, 'no adding tasks to a past day');
 
@@ -96,7 +96,7 @@ assert.equal(await wednesday.locator('.card-moved').count(), 2);
 await ctx.close();
 ({ ctx, page } = await open('2026-11-16T08:40:00+01:00'));
 await page.getByRole('button', { name: 'Settings', exact: true }).click();
-await page.locator('input[type=file]').setInputFiles(FIXTURE);
+await page.locator('input[type=file][accept*="json"]').setInputFiles(FIXTURE);
 await page.locator('.toast', { hasText: 'Backup restored' }).waitFor();
 await page.keyboard.press('Escape');
 await page.locator('.backdrop').waitFor({ state: 'detached' });

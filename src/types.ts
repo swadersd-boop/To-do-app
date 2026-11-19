@@ -49,6 +49,14 @@ export interface Task {
    * half-done task books only the time it still needs.
    */
   blockMin?: number | null;
+  /**
+   * Your answer to "how much is left?" once a task ran past its estimate: the
+   * minutes still needed, as of when `atSec` seconds were tracked. The original
+   * estimate stays as it was, so Insights and the recap stay honest.
+   */
+  left?: { min: number; atSec: number } | null;
+  /** Set on a meeting that came from a calendar file: which calendar, event and occurrence it is. */
+  calendarKey?: string | null;
   /** Each run of the timer on this task, as epoch milliseconds: when the work actually happened. */
   sessions?: { from: number; to: number }[];
   /** Later blocks of the same task on the same day, when the plan splits it around meetings or breaks. */
@@ -109,6 +117,8 @@ export interface Settings {
   /** A daily break that scheduling keeps free, in minutes from midnight. `null` start means no break. */
   lunchStart?: number | null;
   lunchLength?: number;
+  /** The last calendar file imported: its name and when. */
+  calendarImport?: { name: string; at: string } | null;
 }
 
 export interface Timer {

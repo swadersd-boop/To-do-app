@@ -357,6 +357,16 @@ describe('freeMinutes', () => {
 });
 
 describe('weekSummary', () => {
+  it('counts what was still open at the end from the last working day on, each task once', () => {
+    const mon = '2026-11-16';
+    const days = {
+      '2026-11-19': { carried: 2, carriedTitles: ['A', 'B'] },
+      '2026-11-20': { carried: 8, carriedTitles: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] },
+      '2026-11-21': { carried: 1, carriedTitles: ['Buy groceries'] },
+    };
+    expect(weekSummary([], days, [], mon).leftOver).toBe(9);
+  });
+
   it('counts each task once and reports what was left at the end of the week', () => {
     const mon = '2026-11-09';
     const tasks = [
@@ -505,6 +515,14 @@ describe('planDay: one stream in priority order', () => {
 });
 
 describe('work done and work left', () => {
+  it('counts a task ticked off without the timer by the block it kept, the same on every screen', () => {
+    // Finished at 10:00 in a block that started 09:45: the block shrank to the 15 minutes it took.
+    const invoice = task({ planned: 30, done: true, start: 585, blockMin: 15 });
+    // Finished before its block came up: no block, so what was left of the estimate.
+    const early = task({ planned: 20, done: true });
+    expect(workDone([invoice, early])).toBe(15 + 20);
+  });
+
   it('counts time worked today, or the estimate of a task finished without the timer', () => {
     const day = [
       task({ planned: 120, actualSec: 128 * 60, trackedBefore: 95 * 60, done: true }),

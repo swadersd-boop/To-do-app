@@ -41,6 +41,8 @@ export function ShutdownRitual() {
   const atPace = useStore((s) => s.settings.planAtPace !== false);
   const pace = useMemo(() => (atPace ? (paceOf(tasks) ?? undefined) : undefined), [tasks, atPace]);
   const left = workLeft(open, pace);
+  // Tasks past their estimate add nothing to the number above until someone says what is left.
+  const unknown = open.filter(estimateUsedUp).length;
   const actual = workDone(todays, saved);
   const summary = shutdownText(today, todays, channels, reflection, pace, saved);
 
@@ -143,7 +145,7 @@ export function ShutdownRitual() {
                     </div>
                     {estimateUsedUp(t) && (
                       // The number picked is the time still needed, so tomorrow's plan has something true to go on.
-                      <EstimateChip value={null} onChange={(min) => min !== null && updateTask(t.id, { planned: Math.round(t.actualSec / 60) + min })} />
+                      <EstimateChip value={null} onChange={(min) => min !== null && useStore.getState().setLeft(t.id, min)} />
                     )}
                     <div className="row">
                       <button type="button" className="btn btn-quiet" onClick={() => deferOne(t.id)}>
@@ -176,7 +178,10 @@ export function ShutdownRitual() {
             </div>
             <div>
               <strong>{left >= 1 ? fmtMin(left) : 'none'}</strong>
-              <span>of work left undone</span>
+              <span>
+                of work left undone
+                {unknown > 0 && `, plus ${unknown} ${unknown === 1 ? 'task' : 'tasks'} past ${unknown === 1 ? 'its' : 'their'} estimate`}
+              </span>
             </div>
             <div>
               <strong>{actual >= 1 ? fmtMin(actual) : 'none'}</strong>

@@ -4,7 +4,7 @@ import type { Repeat, Task } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
-import { addDays, weekStart } from '../lib/dates';
+import { nextWorkday, relativeDay, weekStart } from '../lib/dates';
 import { fmtClock, parseClock } from '../lib/time';
 import { AddLine, CheckCircle, DurationInput, EstimateChip, useEscape, useTracked } from './bits';
 
@@ -26,6 +26,8 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
   const allObjectives = useStore((s) => s.objectives);
   const { updateTask, toggleDone, addSubtask, updateSubtask, deleteSubtask, startTimer } = useStore.getState();
   const today = useUI((s) => s.today);
+  // The next working day: Monday after a Friday, unless weekends are on.
+  const next = nextWorkday(today, Boolean(useStore.getState().settings.weekendRollover));
   const focusOn = useUI((s) => s.focusOn);
   const { seconds } = useTracked(task.id, task.actualSec);
   const titleRef = useRef<HTMLTextAreaElement>(null);
@@ -103,9 +105,9 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
                     Today
                   </button>
                 )}
-                {task.date !== addDays(today, 1) && (
-                  <button type="button" className="btn btn-quiet" onClick={() => updateTask(task.id, { date: addDays(today, 1) })}>
-                    Tomorrow
+                {task.date !== next && (
+                  <button type="button" className="btn btn-quiet" onClick={() => updateTask(task.id, { date: next })}>
+                    {relativeDay(next, today)}
                   </button>
                 )}
                 {task.date !== null && (

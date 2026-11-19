@@ -2,6 +2,7 @@ import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
 import { fmtClock, fmtMin } from './time';
 import { plannedTotal, todaySec, workDone, workLeft } from './stats';
+import { leftOf } from './model';
 
 const tag = (t: Task, channels: Channel[]) => {
   const c = channels.find((x) => x.id === t.channelId);
@@ -13,7 +14,9 @@ function size(t: Task): string {
   if (!t.planned) return '';
   const done = t.actualSec / 60;
   if (done < 1) return ` (${fmtMin(t.planned)})`;
-  if (done >= t.planned) return ` (past its ${fmtMin(t.planned)} estimate)`;
+  const left = leftOf(t) ?? 0;
+  if (t.left && left > 0) return ` (${fmtMin(left)} still needed, past its ${fmtMin(t.planned)} estimate)`;
+  if (left <= 0) return ` (past its ${fmtMin(t.planned)} estimate)`;
   return ` (${fmtMin(Math.max(0, t.planned - done))} left of ${fmtMin(t.planned)})`;
 }
 
@@ -88,7 +91,7 @@ export function shutdownText(
 
 /** What a partly booked task gets today, against what it needs in all. */
 export function partlyText(p: { task: Task; minutes: number; need: number }): string {
-  const byEstimate = Math.max(0, (p.task.planned ?? 0) - p.task.actualSec / 60);
+  const byEstimate = leftOf(p.task) ?? 0;
   const atPace = p.need > byEstimate + 4 ? ' at your pace' : '';
   return `"${p.task.title}" gets ${fmtMin(p.minutes)} today of the ${fmtMin(p.need)} it needs${atPace}. The rest stays on the list.`;
 }

@@ -1,10 +1,11 @@
 import { useMemo, useRef } from 'react';
 import { Download, Trash2, Upload } from 'lucide-react';
 import { CHANNEL_COLORS, isPlannerData, snapshot, useStore } from '../store';
+import { CalendarButton, importedWhen } from './CalendarImport';
 import { useUI } from '../ui';
 import { addDays, shortDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
-import { type Honesty, MIN_SAMPLES, honesty, todos, trackedOn, weekSummary } from '../lib/stats';
+import { type Honesty, MIN_SAMPLES, honesty, todos, weekSummary, workDone } from '../lib/stats';
 import { AddLine, Dialog } from './bits';
 
 const close = () => useUI.getState().openModal(null);
@@ -178,6 +179,24 @@ export function Settings() {
           How quick add and the shortcuts work
         </button>
 
+        <h4>Calendar</h4>
+        <p className="muted">
+          Bring in your meetings from Google Calendar, Outlook or Apple Calendar. Save your calendar as an .ics file and pick it here: Kalm adds the
+          meetings of the next two weeks with fixed times. Import the same file again after changes, and moved meetings move and cancelled ones go.
+        </p>
+        <p className="muted">
+          In Google Calendar: Settings, Import &amp; export, Export, then unzip the download. Kalm cannot read your calendar by itself, because it
+          keeps everything in this browser.
+        </p>
+        <div className="row wrap">
+          <CalendarButton />
+          {settings.calendarImport && (
+            <span className="muted">
+              Last: {settings.calendarImport.name}, {importedWhen(settings.calendarImport.at)}
+            </span>
+          )}
+        </div>
+
         <h4>Your data</h4>
         <p className="muted">Everything is stored in this browser and nowhere else. Download a backup now and then, or to move to another device.</p>
         <div className="row wrap">
@@ -249,7 +268,7 @@ export function Insights() {
         .filter((date) => date <= today && date >= firstDay)
         .map((date) => {
           const all = tasks.filter((t) => t.date === date);
-          return { date, done: todos(all).filter((t) => t.done).length, movedOn: days[date]?.carried ?? 0, tracked: trackedOn(all, days[date]) };
+          return { date, done: todos(all).filter((t) => t.done).length, movedOn: days[date]?.carried ?? 0, tracked: workDone(all, days[date]) };
         }),
     [tasks, days, thisWeek, today, firstDay],
   );
@@ -305,7 +324,7 @@ export function Insights() {
           <tr>
             <th>Week of</th>
             <th className="num">Done</th>
-            <th className="num">Tracked</th>
+            <th className="num">Worked</th>
             <th className="num" title="To-dos still open when the week ended">Left over</th>
             <th className="num">Objectives</th>
           </tr>
@@ -332,7 +351,7 @@ export function Insights() {
                 <th>Day</th>
                 <th className="num">Done</th>
                 <th className="num" title="Unfinished tasks that moved on to the next day">Moved on</th>
-                <th className="num">Tracked</th>
+                <th className="num">Worked</th>
               </tr>
             </thead>
             <tbody>

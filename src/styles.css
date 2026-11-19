@@ -2353,3 +2353,8 @@ li:focus-within > .row-x {
     padding-right: 18px;
   }
 }
+
+.timer-question .time-field {
+  width: auto;
+  min-width: 7rem;
+}

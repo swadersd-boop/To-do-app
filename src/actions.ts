@@ -3,6 +3,7 @@ import { useStore } from './store';
 import { useUI } from './ui';
 import { parseQuickAdd } from './lib/parse';
 import { fmtClock } from './lib/time';
+import { occursOn } from './lib/model';
 import { nextWorkday, relativeDay, toISO } from './lib/dates';
 
 /** Creates a task from one typed line. Returns its id, or null for an empty title. */
@@ -13,13 +14,21 @@ export function addFromText(text: string, fallbackDate: ISODate | null, atTop = 
   const store = useStore.getState();
   const date = parsed.date === undefined ? fallbackDate : parsed.date;
   // The same meeting at the same time is already there, for example from a repeating series.
-  const twin =
-    parsed.start !== null && date !== null
-      ? store.tasks.find((t) => t.date === date && t.fixed && t.start === parsed.start && t.title.trim().toLowerCase() === parsed.title.trim().toLowerCase())
-      : undefined;
-  if (twin) {
-    notify(`"${twin.title}" at ${fmtClock(twin.start!)} is already on ${relativeDay(date!, today).toLowerCase() === 'today' ? 'today' : relativeDay(date!, today)}.`);
-    return null;
+  const same = (t: { title: string; start: number | null; fixed?: boolean }) =>
+    t.fixed && t.start === parsed.start && t.title.trim().toLowerCase() === parsed.title.trim().toLowerCase();
+  const on = date === null ? '' : ['Today', 'Tomorrow'].includes(relativeDay(date, today)) ? relativeDay(date, today).toLowerCase() : relativeDay(date, today);
+  if (parsed.start !== null && date !== null) {
+    const twin = store.tasks.find((t) => t.date === date && same(t));
+    if (twin) {
+      notify(`"${twin.title}" at ${fmtClock(twin.start!)} is already on ${on}.`);
+      return null;
+    }
+    // A repeating meeting that will land on that day already covers it.
+    const series = store.tasks.find((t) => same(t) && occursOn(t, date));
+    if (series) {
+      notify(`"${series.title}" repeats ${series.repeat === 'weekly' ? 'every week' : series.repeat === 'weekdays' ? 'on weekdays' : 'every day'}, so it is already on ${on}.`);
+      return null;
+    }
   }
   const id = store.addTask(
     {
@@ -64,7 +73,12 @@ export function nameTasks(tasks: { title: string }[]): string {
 }
 
 /** Sends tasks that did not fit to tomorrow, with an undo. */
-export function moveToTomorrow(ids: string[], prefix = ''): void {
+/**
+ * Moves tasks to the next working day. `byPlan` marks moves the plan made for
+ * you when the day was full: those do not count toward parking a task in the
+ * backlog, since you did not choose to put it off.
+ */
+export function moveToTomorrow(ids: string[], prefix = '', byPlan = false): void {
   const store = useStore.getState();
   const { today, notify } = useUI.getState();
   const before = store.tasks;
@@ -75,7 +89,7 @@ export function moveToTomorrow(ids: string[], prefix = ''): void {
     const t = before.find((x) => x.id === id);
     return Boolean(t) && toISO(new Date(t!.createdAt)) === today;
   };
-  const parked = ids.filter((id) => store.defer(id, target, { counts: !createdToday(id) }) === 'backlog');
+  const parked = ids.filter((id) => store.defer(id, target, { counts: !byPlan && !createdToday(id) }) === 'backlog');
   const moved = ids.filter((id) => !parked.includes(id));
   const titles = (list: string[]) => nameTasks(before.filter((t) => list.includes(t.id)));
   const message = [

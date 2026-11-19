@@ -7,7 +7,7 @@ import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
 import { fmtMin } from '../lib/time';
 import { todaySec } from '../lib/stats';
-import { blocksOf } from '../lib/model';
+import { blocksOf, leftOf } from '../lib/model';
 import { fmtClock } from '../lib/time';
 import { ChannelPill, CheckCircle, EstimateChip, useNow, useTracked } from './bits';
 
@@ -25,6 +25,11 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
   // A split task under way shows when its next block starts, not the first one that is already behind.
   const split = task.start !== null && !task.done && !task.fixed && isToday && Boolean(task.parts?.length);
   const now = useNow(60_000, split);
+  // When the plan booked more than the estimate (planning at your pace), say so on the card.
+  // Only for work not started yet: once there is tracked time, the timeline shows what happened.
+  const booked = isToday && !task.done && !task.fixed && task.start !== null && todaySec(task) < 60 ? blocksOf(task).reduce((sum, b) => sum + b.end - b.start, 0) : 0;
+  const byEstimate = leftOf(task);
+  const bookedMore = byEstimate !== null && booked - byEstimate >= 10;
   const shownStart = (() => {
     if (!split) return task.start;
     const at = new Date(now);
@@ -71,6 +76,11 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
           <span className={`meta ${task.fixed ? 'meta-fixed' : ''}`} title={task.fixed ? 'Fixed time' : 'Planned time'}>
             {task.fixed ? <Pin size={12} /> : <Clock size={12} />}
             {fmtClock(shownStart ?? task.start)}
+          </span>
+        )}
+        {bookedMore && (
+          <span className="meta" title="The plan books more than the estimate, going by how long your tasks really take.">
+            {fmtMin(booked)} booked
           </span>
         )}
         {task.subtasks.length > 0 && (

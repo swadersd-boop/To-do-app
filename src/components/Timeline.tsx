@@ -125,7 +125,7 @@ function Block({
       const before = useStore.getState().tasks;
       if (gesture.mode === 'move') shift(gesture.start - span.start);
       else resize(gesture.length);
-      const clash = gesture.mode === 'move' ? overlaps() : '';
+      const clash = overlaps(gesture.mode);
       useUI.getState().notify(`${gesture.mode === 'move' ? `Moved "${task.title}".` : `Resized "${task.title}".`}${clash}`, {
         label: 'Undo',
         run: () => useStore.setState({ tasks: before }),
@@ -153,15 +153,16 @@ function Block({
   }
 
   /** Names what the task now sits on top of, so a move never hides a clash. */
-  function overlaps(): string {
+  function overlaps(mode: Gesture['mode']): string {
     const s = useStore.getState();
     const moved = s.tasks.find((t) => t.id === task.id)!;
     const spans = (t: Task) => [
       { start: t.start!, end: t.start! + lengthOf(t) },
       ...(t.parts ?? []).map((p) => ({ start: p.start, end: p.start + p.length })),
     ];
-    // Only the blocks that moved: the ones from this block on.
-    const mine = spans(moved).slice(part === undefined ? 0 : part + 1);
+    // Only the blocks that changed: from this block on for a move, this one block for a resize.
+    const index = part === undefined ? 0 : part + 1;
+    const mine = mode === 'move' ? spans(moved).slice(index) : spans(moved).slice(index, index + 1);
     const hits = (b: { start: number; end: number }) => mine.some((m) => m.start < b.end && b.start < m.end);
     const names = [
       ...breaksOf(s.settings).filter(hits).map(() => 'lunch'),

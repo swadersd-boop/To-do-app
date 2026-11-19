@@ -5,11 +5,12 @@ import type { Task } from '../types';
 import { breaksOf, useStore } from '../store';
 import { useUI } from '../ui';
 import { addFromText, copyText, deferOne, deleteWithUndo, moveToTomorrow, nameTasks } from '../actions';
-import { planDay as planBlocks, byTime, estimateUsedUp, freeMinutes, tasksOn } from '../lib/model';
+import { planDay as planBlocks, byTime, estimateUsedUp, freeMinutes, leftOf, tasksOn } from '../lib/model';
 import { addDays, longDate, nextWorkday, relativeDay, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, weekSummary, workDone, workLeft } from '../lib/stats';
 import { partlyText, planText } from '../lib/summary';
+import { CalendarButton, importedWhen } from './CalendarImport';
 import { encodePlan } from '../lib/share';
 import { AddLine, ChannelPill, Dialog, EstimateChip, LoadBar } from './bits';
 import { ObjectiveList } from './Objectives';
@@ -50,10 +51,10 @@ function Row({ task, children }: { task: Task; children: React.ReactNode }) {
         </span>
       </div>
       <EstimateChip
-        value={estimateUsedUp(task) ? null : task.planned}
+        value={estimateUsedUp(task) ? null : task.left ? Math.round(leftOf(task) ?? 0) : task.planned}
         onChange={(min) =>
-          // For a task past its estimate, the number picked is the time still needed.
-          updateTask(task.id, { planned: estimateUsedUp(task) && min !== null ? Math.round(task.actualSec / 60) + min : min })
+          // Past its estimate (or once you have said), the number is the time still needed; the estimate stays.
+          estimateUsedUp(task) || task.left ? min !== null && useStore.getState().setLeft(task.id, min) : updateTask(task.id, { planned: min })
         }
       />
       <div className="row">{children}</div>
@@ -144,7 +145,7 @@ export function PlanRitual() {
 
   // What "Start my day" would do, so nothing is dropped by surprise.
   // The same rule "Start my day" uses: no more work than the day's capacity, and only the time that is left.
-  const budget = Math.max(0, settings.capacityMin - doneToday);
+  const budget = Math.max(0, Math.round(settings.capacityMin - doneToday));
   const placements = useMemo(() => planBlocks(open, from, until, breaks, budget, usePace, today), [open, from, until, breaks, budget, usePace, today]);
   const preview = useMemo(
     () => Object.fromEntries(Object.entries(placements).map(([id, p]) => [id, p ? p.blocks[0].start : null])) as Record<string, number | null>,
@@ -169,7 +170,7 @@ export function PlanRitual() {
     const left = fill ? autoSchedule(today, nowMin, usePace).left : [];
     close();
     if (left.length === 0) return notify('Day planned. Go do the first thing.');
-    if (deferRest) return moveToTomorrow(left.map((t) => t.id), 'Day planned.');
+    if (deferRest) return moveToTomorrow(left.map((t) => t.id), 'Day planned.', true);
     notify(
       `Day planned. ${nameTasks(left)} ${left.length === 1 ? 'does' : 'do'} not fit today.`,
       { label: `Move to ${nextName}`, run: () => moveToTomorrow(left.map((t) => t.id)) },
@@ -228,7 +229,7 @@ export function PlanRitual() {
           <h3>A new week</h3>
           <p className="lede">
             Last week you finished {review.done} task{review.done === 1 ? '' : 's'}
-            {review.tracked >= 1 && ` and tracked ${fmtMin(review.tracked)}`}
+            {review.tracked >= 1 && ` and worked ${fmtMin(review.tracked)}`}
             {review.leftOver > 0 && `, with ${review.leftOver} still open at the end`}.
           </p>
           {lastObjectives.length > 0 && (
@@ -343,6 +344,12 @@ export function PlanRitual() {
                   Meetings, which keep their time: {meetings.map((t) => `${t.title} ${fmtClock(t.start!)}`).join(', ')}
                 </p>
               )}
+              <p className="muted hint row wrap">
+                {settings.calendarImport
+                  ? `Meetings from ${settings.calendarImport.name}, imported ${importedWhen(settings.calendarImport.at)}.`
+                  : 'Meetings in your calendar? Bring them in from an .ics file.'}
+                <CalendarButton label={settings.calendarImport ? 'Import again' : 'Import a calendar file'} quiet />
+              </p>
               <AddLine placeholder="Add a task, e.g. Review deck 30m #work" label="Add a task to today" onAdd={(t) => {
                   // New work goes above the leftovers, in the order it is typed.
                   const id = addFromText(t, today, true);

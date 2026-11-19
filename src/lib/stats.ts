@@ -1,5 +1,5 @@
-import { addDays } from './dates';
-import { estimateUsedUp, needOf } from './model';
+import { addDays, isWeekend } from './dates';
+import { blocksOf, estimateUsedUp, needOf } from './model';
 import type { Task } from '../types';
 
 export interface Honesty {
@@ -59,12 +59,6 @@ export const actualTotal = (tasks: Task[]) => tasks.reduce((sum, t) => sum + t.a
 /** Seconds of a task tracked on its current day, leaving out days it was carried from. */
 export const todaySec = (t: Task) => Math.max(0, t.actualSec - (t.trackedBefore ?? 0));
 
-/**
- * Minutes tracked on one day: the time on its tasks, plus time on tasks that
- * were later carried to another day. Pass that day's log for the second part.
- */
-export const trackedOn = (tasks: Task[], log?: { carriedSec?: number }) =>
-  (tasks.reduce((sum, t) => sum + todaySec(t), 0) + (log?.carriedSec ?? 0)) / 60;
 
 /** To-dos only: meetings and other fixed commitments are not counted as work done or left. */
 export const todos = (tasks: Task[]) => tasks.filter((t) => !t.fixed);
@@ -84,19 +78,25 @@ export interface WeekSummary {
 /** What a calendar week came to. Each task counts once, on the day it was finished. */
 export function weekSummary(
   tasks: Task[],
-  days: Record<string, { carried?: number; carriedSec?: number }>,
+  days: Record<string, { carried?: number; carriedSec?: number; carriedTitles?: string[] }>,
   objectives: { weekStart: string; done: boolean }[],
   start: string,
 ): WeekSummary {
   const dates = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const inWeek = tasks.filter((t) => t.date !== null && dates.includes(t.date));
-  const lastLog = [...dates].reverse().find((d) => days[d] && (days[d].carried ?? 0) > 0);
+  // What was still open when the working week ended: from its last working day with leftovers to the end
+  // of the week, each task once (a task carried Friday and again Saturday is one task).
+  const carriedFrom = (d: string) => days[d] && (days[d].carried ?? 0) > 0;
+  const lastWork = [...dates].reverse().find((d) => !isWeekend(d) && carriedFrom(d)) ?? [...dates].reverse().find(carriedFrom);
+  const tail = lastWork ? dates.filter((d) => d >= lastWork && carriedFrom(d)) : [];
+  const titles = tail.flatMap((d) => days[d].carriedTitles ?? []);
+  const leftOver = tail.every((d) => days[d].carriedTitles) ? new Set(titles).size : tail.reduce((sum, d) => sum + (days[d].carried ?? 0), 0);
   const objs = objectives.filter((o) => o.weekStart === start);
   return {
     start,
     done: inWeek.filter((t) => t.done && !t.fixed).length,
-    tracked: dates.reduce((sum, d) => sum + trackedOn(inWeek.filter((t) => t.date === d), days[d]), 0),
-    leftOver: lastLog ? days[lastLog].carried ?? 0 : 0,
+    tracked: dates.reduce((sum, d) => sum + workDone(inWeek.filter((t) => t.date === d), days[d]), 0),
+    leftOver,
     objectivesDone: objs.filter((o) => o.done).length,
     objectives: objs.length,
   };
@@ -116,20 +116,28 @@ export function paceOf(history: Task[]): ((t: Task) => number) | null {
 }
 
 /**
- * Minutes of work done on a day's to-dos: the time tracked on that day, or,
- * for a task finished without the timer, what was left of its estimate.
+ * Minutes worked on one to-do on its day: the time tracked, or, for a task
+ * finished without the timer, the block it kept on the timeline (it shrinks
+ * to the time taken when finished partway), else what was left of its estimate.
+ */
+export function workedMin(t: Task): number {
+  if (t.fixed) return 0;
+  const tracked = todaySec(t) / 60;
+  if (tracked >= 1) return tracked;
+  if (!t.done) return 0;
+  if (t.start !== null) return blocksOf(t).reduce((sum, b) => sum + b.end - b.start, 0);
+  return Math.max(0, (t.planned ?? 0) - (t.trackedBefore ?? 0) / 60);
+}
+
+/**
+ * Minutes of work done on a day's to-dos, as workedMin counts them. This is
+ * the one measure of a day's work: the column, the shutdown, the recap,
+ * Insights and the weekly review all use it.
  * Meetings are not counted. Pass the day's log to include time worked there
  * on tasks that have since moved to another day.
  */
 export function workDone(day: Task[], log?: { carriedSec?: number }): number {
-  return (log?.carriedSec ?? 0) / 60 + day
-    .filter((t) => !t.fixed)
-    .reduce((sum, t) => {
-      const tracked = todaySec(t) / 60;
-      if (tracked >= 1) return sum + tracked;
-      // Finished without the timer: count the part of the estimate not already worked on earlier days.
-      return sum + (t.done ? Math.max(0, (t.planned ?? 0) - (t.trackedBefore ?? 0) / 60) : 0);
-    }, 0);
+  return (log?.carriedSec ?? 0) / 60 + day.reduce((sum, t) => sum + workedMin(t), 0);
 }
 
 /** Minutes the open to-dos of a day still need, measured as the plan measures them. */

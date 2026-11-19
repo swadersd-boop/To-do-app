@@ -8,7 +8,7 @@ import { addFromText } from '../actions';
 import { estimateUsedUp, occursOn, tasksOn } from '../lib/model';
 import { isWeekend, relativeDay, shortDate, weekdayName } from '../lib/dates';
 import { fmtMin } from '../lib/time';
-import { fixedTotal, paceOf, trackedOn, workDone, workLeft } from '../lib/stats';
+import { fixedTotal, paceOf, workDone, workLeft } from '../lib/stats';
 import { AddLine, LoadBar } from './bits';
 import { GhostCard, TaskCard } from './TaskCard';
 
@@ -43,7 +43,7 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const planned = left + worked;
   const fixed = fixedTotal(upcoming);
   const doneCount = list.filter((t) => t.done && !t.fixed).length;
-  const tracked = trackedOn(list, log);
+  const tracked = workDone(list, log);
   const over = planned - capacity;
   // Once every to-do has its time, what does not fit was booked in part on purpose: it carries over, it is not a warning.
   const todo = open.filter((t) => !t.fixed && !estimateUsedUp(t));
@@ -74,14 +74,14 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
         <LoadBar planned={booked ? Math.min(planned, capacity) : planned} capacity={capacity} />
         <span
           className={`col-load-text ${over > 0 && !booked ? 'is-over' : ''}`}
-          title={isPast && (log?.carriedSec ?? 0) >= 60 ? `Tracked time includes ${fmtMin(log!.carriedSec! / 60)} on tasks that moved on to a later day.` : undefined}
+          title={isPast && (log?.carriedSec ?? 0) >= 60 ? `Includes ${fmtMin(log!.carriedSec! / 60)} worked on tasks that moved on to a later day.` : undefined}
         >
           {empty
             ? 'Nothing planned'
             : isPast
               ? doneCount === 0 && tracked < 1 && !log?.plannedAt
                 ? 'Not planned'
-                : `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} tracked` : ''}`
+                : `${doneCount} done${tracked >= 1 ? ` · ${fmtMin(tracked)} worked` : ''}`
               : over > 0
                 ? booked
                   ? `${fmtMin(left)} left, ${fmtMin(over)} carries over`
