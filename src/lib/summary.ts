@@ -1,8 +1,8 @@
 import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
 import { fmtClock, fmtMin } from './time';
-import { plannedTotal, todaySec, workDone, workLeft } from './stats';
-import { leftOf } from './model';
+import { plannedTotal, todaySec, workDone, workedMin, workLeft } from './stats';
+import { estimateUsedUp, leftOf } from './model';
 
 const tag = (t: Task, channels: Channel[]) => {
   const c = channels.find((x) => x.id === t.channelId);
@@ -62,7 +62,9 @@ export function shutdownText(
     lines.push(`Done (${done.length}):`);
     for (const t of done) {
       const before = t.actualSec - todaySec(t);
-      const tracked = todaySec(t) >= 60 ? `: ${fmtMin(todaySec(t) / 60)}${before >= 60 ? ` today, ${fmtMin(t.actualSec / 60)} in all` : ''}` : '';
+      // Finished without the timer: say what was counted for it, so the lines add up to the total.
+      const untimed = todaySec(t) < 60 && workedMin(t) >= 1 ? `: ${fmtMin(workedMin(t))}, not timed` : '';
+      const tracked = todaySec(t) >= 60 ? `: ${fmtMin(todaySec(t) / 60)}${before >= 60 ? ` today, ${fmtMin(t.actualSec / 60)} in all` : ''}` : untimed;
       const planned = t.planned ? ` (planned ${fmtMin(t.planned)})` : '';
       lines.push(`- ${t.title}${tracked}${tracked ? planned : ''}${tag(t, channels)}`);
     }
@@ -84,7 +86,16 @@ export function shutdownText(
   // The same two numbers as the day column: work done today, and what is still left at the plan's pace.
   const actual = workDone(tasks, log);
   const undone = workLeft(tasks, pace);
-  if (actual >= 1 || undone > 0) lines.push('', [actual >= 1 ? `Worked ${fmtMin(actual)}.` : '', undone > 0 ? `${fmtMin(undone)} of work left undone.` : ''].filter(Boolean).join(' '));
+  // Tasks past their estimate have no number left, so they are named rather than counted.
+  const unknown = tasks.filter((t) => !t.fixed && estimateUsedUp(t)).length;
+  const more = unknown > 0 ? `, plus ${unknown} ${unknown === 1 ? 'task' : 'tasks'} past ${unknown === 1 ? 'its' : 'their'} estimate` : '';
+  if (actual >= 1 || undone > 0 || unknown > 0)
+    lines.push(
+      '',
+      [actual >= 1 ? `Worked ${fmtMin(actual)}.` : '', undone > 0 || unknown > 0 ? `${undone > 0 ? fmtMin(undone) : 'None'} of work left undone${more}.` : '']
+        .filter(Boolean)
+        .join(' '),
+    );
   if (reflection.trim()) lines.push('', `Reflection: ${reflection.trim()}`);
   return lines.join('\n');
 }

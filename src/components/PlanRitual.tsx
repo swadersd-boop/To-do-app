@@ -344,6 +344,9 @@ export function PlanRitual() {
                   Meetings, which keep their time: {meetings.map((t) => `${t.title} ${fmtClock(t.start!)}`).join(', ')}
                 </p>
               )}
+              {(saved?.allDay?.length ?? 0) > 0 && (
+                <p className="hint meta-warn">All day today: {[...new Set(saved!.allDay!.map((x) => x.title))].join(', ')}</p>
+              )}
               <p className="muted hint row wrap">
                 {settings.calendarImport
                   ? `Meetings from ${settings.calendarImport.name}, imported ${importedWhen(settings.calendarImport.at)}.`

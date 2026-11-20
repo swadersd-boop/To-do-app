@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { CalendarPlus } from 'lucide-react';
 import { useStore } from '../store';
 import { useUI } from '../ui';
-import { parseCalendar } from '../lib/ics';
+import { readCalendar } from '../lib/ics';
 import { addDays, diffDays, todayISO } from '../lib/dates';
 
 /** How far ahead an import fills the board. */
@@ -23,13 +23,14 @@ export async function importCalendarFile(file: File): Promise<void> {
     return;
   }
   const to = addDays(today, CALENDAR_DAYS - 1);
-  // The file name tells calendars apart, so importing a second calendar never clears the first.
-  const source = file.name.replace(/\.ics$/i, '').toLowerCase();
-  const meetings = parseCalendar(text, today, to, source);
+  const read = readCalendar(text, today, to);
+  // The calendar's own name tells calendars apart; without one, the file name without the " (1)" a second download gets.
+  const cal = (read.name ?? file.name.replace(/\.ics$/i, '').replace(/\s*\(\d+\)$/, '')).toLowerCase();
   const before = useStore.getState().tasks;
-  const { added, updated, removed } = useStore.getState().importCalendar(meetings, today, to, source, file.name);
-  if (meetings.length === 0 && removed === 0) {
-    notify(`No meetings with a time in the next two weeks in ${file.name}. All-day events are left out.`);
+  const beforeDays = useStore.getState().days;
+  const { added, updated, removed, replaced } = useStore.getState().importCalendar(read, today, to, cal, file.name);
+  if (read.meetings.length === 0 && read.allDay.length === 0 && removed === 0) {
+    notify(`No meetings in the next two weeks in ${file.name}.`);
     return;
   }
   const parts = [
@@ -37,11 +38,12 @@ export async function importCalendarFile(file: File): Promise<void> {
     updated > 0 ? `${updated} updated` : '',
     removed > 0 ? `${removed} removed` : '',
   ].filter(Boolean);
+  const took = replaced.length > 0 ? ` ${replaced.map((t) => `"${t}"`).join(' and ')} now ${replaced.length === 1 ? 'comes' : 'come'} from your calendar instead of repeating in Kalm.` : '';
   notify(
-    parts.length > 0
+    (parts.length > 0
       ? `Meetings from ${file.name} for the next two weeks: ${parts.join(', ')}.`
-      : `Your board already has every meeting in ${file.name} for the next two weeks.`,
-    { label: 'Undo', run: () => useStore.setState({ tasks: before }) },
+      : `Your board already has every meeting in ${file.name} for the next two weeks.`) + took,
+    { label: 'Undo', run: () => useStore.setState({ tasks: before, days: beforeDays }) },
   );
 }
 

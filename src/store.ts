@@ -3,8 +3,8 @@ import { persist } from 'zustand/middleware';
 import type { Channel, DayLog, ISODate, Objective, PlannerData, Settings, Subtask, Task } from './types';
 import { addDays, isWeekend, toISO, todayISO, weekStart } from './lib/dates';
 import { paceOf, workDone } from './lib/stats';
-import type { Meeting } from './lib/ics';
-import { DEFAULT_BLOCK, estimateUsedUp, lengthOf, moveTask, nextOccurrence, occursOn, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
+import type { CalendarRead, Meeting } from './lib/ics';
+import { DEFAULT_BLOCK, estimateUsedUp, lengthOf, moveTask, nextOccurrence, planDay, rollover, sessionsOn, tasksOn, type Pace, type Span } from './lib/model';
 
 export const STORAGE_KEY = 'kalm:v1';
 
@@ -125,7 +125,13 @@ interface Actions {
    * `to`: new ones are added, changed ones updated, and ones that are gone from
    * the calendar removed (unless they were worked on or finished).
    */
-  importCalendar: (meetings: Meeting[], from: ISODate, to: ISODate, source: string, name: string) => { added: number; updated: number; removed: number };
+  importCalendar: (
+    read: CalendarRead,
+    from: ISODate,
+    to: ISODate,
+    cal: string,
+    name: string,
+  ) => { added: number; updated: number; removed: number; replaced: string[] };
 
   addSubtask: (taskId: string, title: string) => void;
   updateSubtask: (taskId: string, subId: string, patch: Partial<Subtask>) => void;
@@ -510,46 +516,91 @@ export const useStore = create<Store>()(
           tasks: s.tasks.map((t) => (t.date === date && !t.done && !t.fixed && t.start !== null ? { ...t, start: null, blockMin: null, parts: null } : t)),
         })),
 
-      importCalendar: (meetings, from, to, source, name) => {
+      importCalendar: (read, from, to, cal, name) => {
         const s = get();
+        const { meetings } = read;
         let tasks = s.tasks;
         let added = 0;
         let updated = 0;
-        const same = (t: Task, m: Meeting) => t.fixed && t.start === m.start && t.title.trim().toLowerCase() === m.title.trim().toLowerCase();
+        const now = new Date();
+        const today = todayISO(now);
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+        const lower = (x: string) => x.trim().toLowerCase();
+        const same = (t: Task, m: Meeting) => t.fixed && t.start === m.start && lower(t.title) === lower(m.title);
         const keys = new Set(meetings.map((m) => m.key));
+        const uidOf = (key: string) => key.split('|')[0];
+        const uids = new Set(meetings.map((m) => uidOf(m.key)));
+
+        // A repeating meeting typed into Kalm that the calendar also has: the calendar takes over, so it is not there twice.
+        const titles = new Set(meetings.map((m) => lower(m.title)));
+        const series = tasks.filter((t) => t.fixed && t.repeat && !t.calendarKey && !t.done && titles.has(lower(t.title)) && t.date !== null && t.date >= from);
+        const replaced = [...new Set(series.map((t) => t.title))];
+        tasks = tasks.flatMap((t) => (series.includes(t) ? (t.actualSec > 0 ? [{ ...t, repeat: null }] : []) : [t]));
+
         for (const m of meetings) {
           const mine = tasks.find((t) => t.calendarKey === m.key);
           if (mine) {
-            if (mine.done) continue;
             const changed = mine.title !== m.title || mine.date !== m.date || mine.start !== m.start || mine.planned !== m.length;
             if (!changed) continue;
+            const ahead = m.date > today || (m.date === today && m.start + m.length > nowMin);
+            // A meeting counted as held on its old day but since moved to a time still to come is back on.
+            const revive = mine.done && mine.actualSec === 0 && ahead;
+            if (mine.done && !revive) continue;
             updated++;
             tasks = tasks.map((t) =>
               t.id === mine.id
-                ? { ...t, title: m.title, date: m.date, start: m.start, planned: m.length, blockMin: null, fixed: true, order: t.date === m.date ? t.order : nextOrder(tasks, m.date) }
+                ? {
+                    ...t,
+                    title: m.title,
+                    date: m.date,
+                    start: m.start,
+                    planned: m.length,
+                    blockMin: null,
+                    fixed: true,
+                    calendarId: cal,
+                    order: t.date === m.date ? t.order : nextOrder(tasks, m.date),
+                    ...(revive ? { done: false, doneAt: null, unconfirmed: false } : {}),
+                  }
                 : t,
             );
             continue;
           }
-          // Already typed in by hand, or covered by a repeating meeting in Kalm: link to it rather than add a copy.
+          // Already typed in by hand: link to it rather than add a copy.
           const typed = tasks.find((t) => !t.calendarKey && t.date === m.date && same(t, m));
           if (typed) {
-            tasks = tasks.map((t) => (t.id === typed.id ? { ...t, calendarKey: m.key, planned: m.length } : t));
+            tasks = tasks.map((t) => (t.id === typed.id ? { ...t, calendarKey: m.key, calendarId: cal, planned: m.length } : t));
             continue;
           }
-          if (tasks.some((t) => same(t, m) && occursOn(t, m.date))) continue;
-          const task: Task = { ...makeTask({ title: m.title, date: m.date, planned: m.length, start: m.start, fixed: true }, nextOrder(tasks, m.date)), calendarKey: m.key };
+          const task: Task = {
+            ...makeTask({ title: m.title, date: m.date, planned: m.length, start: m.start, fixed: true }, nextOrder(tasks, m.date)),
+            calendarKey: m.key,
+            calendarId: cal,
+          };
           tasks = [...tasks, task];
           added++;
         }
-        // Gone from the calendar: cancelled or moved out of range. Work already done on it stays.
+        // Gone from the calendar: cancelled, declined or moved out of range. Work already done on it stays.
         const gone = tasks.filter(
           (t) =>
-            t.calendarKey?.startsWith(`${source}|`) && !keys.has(t.calendarKey) && t.date !== null && t.date >= from && t.date <= to && !t.done && t.actualSec === 0,
+            t.calendarKey &&
+            !keys.has(t.calendarKey) &&
+            (t.calendarId === cal || uids.has(uidOf(t.calendarKey))) &&
+            t.date !== null &&
+            t.date >= from &&
+            t.date <= to &&
+            !t.done &&
+            t.actualSec === 0,
         );
         tasks = tasks.filter((t) => !gone.includes(t));
-        set({ tasks, settings: { ...s.settings, calendarImport: { name, at: new Date().toISOString() } } });
-        return { added, updated, removed: gone.length };
+        // All-day events of this calendar, day by day: this import replaces what the last one said.
+        const days = { ...s.days };
+        for (let d = from; d <= to; d = addDays(d, 1)) {
+          const others = (days[d]?.allDay ?? []).filter((x) => x.cal !== cal);
+          const mineAllDay = read.allDay.filter((x) => x.date === d).map((x) => ({ title: x.title, cal }));
+          if (others.length + mineAllDay.length > 0 || days[d]?.allDay) days[d] = { ...days[d], allDay: [...others, ...mineAllDay] };
+        }
+        set({ tasks, days, settings: { ...s.settings, calendarImport: { name, at: new Date().toISOString() } } });
+        return { added, updated, removed: gone.length, replaced };
       },
 
       removeExamples: () =>

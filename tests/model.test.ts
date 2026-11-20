@@ -261,6 +261,16 @@ describe('summaries', () => {
     expect(recap).toContain('- Write report: 3h 55m worked');
   });
 
+  it('makes the recap lines add up, and names tasks past their estimate', () => {
+    const tasks = [
+      task({ title: 'Reply to legal', planned: 20, done: true }),
+      task({ title: 'Design onboarding', planned: 120, actualSec: 188 * 60 }),
+    ];
+    const recap = shutdownText('2026-11-16', tasks, channels, '');
+    expect(recap).toContain('- Reply to legal: 20m, not timed');
+    expect(recap).toContain('None of work left undone, plus 1 task past its estimate.');
+  });
+
   it('says where time on work put off to a later day went', () => {
     const recap = shutdownText('2026-11-17', [], channels, '', undefined, { carriedSec: 79 * 60, carriedTitles: ['Prep slides'], carriedWork: [{ title: 'Prep slides', sec: 79 * 60 }] });
     expect(recap).toContain('Moved to a later day (1):\n- Prep slides: 1h 19m worked');

@@ -419,7 +419,11 @@ export function timerAsk(timer: Timer, task: Task, tasks: Task[]): TimerAsk {
     tasks
       .filter((t) => t.fixed && t.id !== task.id && t.date === day && t.start !== null && startOfDay.getTime() + t.start * 60_000 > since)
       .sort((a, b) => a.start! - b.start!)[0] ?? null;
-  const graceMin = task.planned ? Math.max(task.planned * 1.5, task.planned + 30) : 90;
+  // Ask once the task as a whole runs well past what it should take, counting time logged before this run.
+  // actualSec holds finished runs only; the running one is still on the clock.
+  const before = task.actualSec / 60;
+  const expected = task.left ? (task.left.min + task.left.atSec / 60) : task.planned;
+  const graceMin = expected ? Math.max(30, Math.max(expected * 1.5, expected + 30) - before) : 90;
   const long = timer.checkedAt ? timer.checkedAt + 60 * 60_000 : timer.startedAt + graceMin * 60_000;
   if (meeting) {
     const begins = startOfDay.getTime() + meeting.start! * 60_000;

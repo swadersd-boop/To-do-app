@@ -8,6 +8,7 @@ const today = todayISO();
 const yesterday = addDays(today, -1);
 const store = () => useStore.getState();
 const find = (id: string) => store().tasks.find((t) => t.id === id)!;
+const read = (meetings: { key: string; title: string; date: string; start: number; length: number }[]) => ({ name: null, meetings, allDay: [] });
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -476,6 +477,36 @@ describe('store', () => {
     expect(find(id).actualSec).toBe((19 * 60 - (17 * 60 + 5)) * 60);
   });
 
+  it('matches a calendar saved under another file name instead of adding it twice', () => {
+    const m = [{ key: 'standup-uid|1', title: 'Standup', date: today, start: 660, length: 15 }];
+    store().importCalendar(read(m), today, today, 'basic', 'basic.ics');
+    expect(store().importCalendar(read(m), today, today, 'basic (1)', 'basic (1).ics')).toMatchObject({ added: 0 });
+    expect(store().tasks.filter((t) => t.title === 'Standup')).toHaveLength(1);
+    // And cancelling it in the second file removes it, wherever it came from first.
+    expect(store().importCalendar(read([{ key: 'other|1', title: 'Other', date: today, start: 700, length: 15 }]), today, today, 'basic (1)', 'x.ics').removed).toBe(0);
+  });
+
+  it('brings back a meeting that was counted as held but moved to later in the calendar', () => {
+    const d1 = addDays(today, -1);
+    const m = { key: 'one|slot', title: '1:1 with Marieke', date: d1, start: 930, length: 30 };
+    store().importCalendar(read([m]), d1, today, 'work', 'work.ics');
+    store().settleCommitments(today, 600);
+    expect(store().tasks.find((t) => t.title === '1:1 with Marieke')!.done).toBe(true);
+    const moved = { ...m, date: addDays(today, 1), start: 630 };
+    expect(store().importCalendar(read([moved]), today, addDays(today, 1), 'work', 'work.ics').updated).toBe(1);
+    expect(store().tasks.find((t) => t.title === '1:1 with Marieke')).toMatchObject({ done: false, date: addDays(today, 1), start: 630 });
+  });
+
+  it('lets the calendar take over a repeating meeting typed into Kalm, and keeps all-day events on their day', () => {
+    const typed = store().addTask({ title: 'Standup', date: today, planned: 15, start: 570, fixed: true });
+    store().updateTask(typed, { repeat: 'weekdays', repeatFrom: today });
+    const m = [{ key: 'su|1', title: 'Standup', date: today, start: 660, length: 15 }];
+    const result = store().importCalendar({ name: null, meetings: m, allDay: [{ date: addDays(today, 1), title: 'Out of office' }] }, today, addDays(today, 1), 'work', 'work.ics');
+    expect(result.replaced).toEqual(['Standup']);
+    expect(store().tasks.filter((t) => t.title === 'Standup' && !t.done)).toEqual([expect.objectContaining({ start: 660, calendarKey: 'su|1' })]);
+    expect(store().days[addDays(today, 1)].allDay).toEqual([{ title: 'Out of office', cal: 'work' }]);
+  });
+
   it('imports calendar meetings once, updates them, and removes ones that were cancelled', () => {
     const d1 = today;
     const d2 = addDays(today, 1);
@@ -485,15 +516,15 @@ describe('store', () => {
       { key: 'work|call|1', title: 'Client call', date: d1, start: 840, length: 60 },
       { key: 'work|review|1', title: 'Review', date: d2, start: 600, length: 30 },
     ];
-    expect(store().importCalendar(first, d1, d2, 'work', 'work.ics')).toEqual({ added: 2, updated: 0, removed: 0 });
+    expect(store().importCalendar(read(first), d1, d2, 'work', 'work.ics')).toEqual({ added: 2, updated: 0, removed: 0, replaced: [] });
     // The standup typed by hand is linked, not copied.
     expect(store().tasks.filter((t) => t.title === 'Standup')).toHaveLength(1);
     expect(find(typed).calendarKey).toBe('work|standup|1');
     // Importing the same file again changes nothing.
-    expect(store().importCalendar(first, d1, d2, 'work', 'work.ics')).toEqual({ added: 0, updated: 0, removed: 0 });
+    expect(store().importCalendar(read(first), d1, d2, 'work', 'work.ics')).toEqual({ added: 0, updated: 0, removed: 0, replaced: [] });
     // The call moved to 15:00 and the review was cancelled.
     const second = [first[0], { ...first[1], start: 900 }];
-    expect(store().importCalendar(second, d1, d2, 'work', 'work.ics')).toEqual({ added: 0, updated: 1, removed: 1 });
+    expect(store().importCalendar(read(second), d1, d2, 'work', 'work.ics')).toEqual({ added: 0, updated: 1, removed: 1, replaced: [] });
     expect(store().tasks.find((t) => t.title === 'Client call')).toMatchObject({ start: 900, fixed: true, planned: 60 });
     expect(store().tasks.some((t) => t.title === 'Review')).toBe(false);
     expect(store().settings.calendarImport?.name).toBe('work.ics');

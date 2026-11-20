@@ -7,7 +7,7 @@ import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
 import { fmtMin } from '../lib/time';
 import { todaySec } from '../lib/stats';
-import { blocksOf, leftOf } from '../lib/model';
+import { blocksOf, estimateUsedUp, leftOf } from '../lib/model';
 import { fmtClock } from '../lib/time';
 import { ChannelPill, CheckCircle, EstimateChip, useNow, useTracked } from './bits';
 
@@ -78,6 +78,11 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
             {fmtClock(shownStart ?? task.start)}
           </span>
         )}
+        {task.left && !task.done && (
+          <span className="meta" title="What you said is still needed, past the original estimate">
+            {fmtMin(leftOf(task) ?? 0)} left
+          </span>
+        )}
         {bookedMore && (
           <span className="meta" title="The plan books more than the estimate, going by how long your tasks really take.">
             {fmtMin(booked)} booked
@@ -102,7 +107,12 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
           </span>
         )}
         <span className="spacer" />
-        <EstimateChip value={task.planned} onChange={(planned) => updateTask(task.id, { planned })} actualMin={(isPastDay ? todaySec(task) : seconds) / 60} />
+        <EstimateChip
+          value={task.planned}
+          // Past the estimate, the number picked is what is still needed; the estimate stays as it was.
+          onChange={(min) => (estimateUsedUp(task) && min !== null ? useStore.getState().setLeft(task.id, min) : updateTask(task.id, { planned: min }))}
+          actualMin={(isPastDay ? todaySec(task) : seconds) / 60}
+        />
       </div>
     </div>
   );

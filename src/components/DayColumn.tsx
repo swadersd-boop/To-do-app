@@ -45,6 +45,8 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
   const doneCount = list.filter((t) => t.done && !t.fixed).length;
   const tracked = workDone(list, log);
   const over = planned - capacity;
+  // A weekend day with no to-dos is not a workday, even with a meeting or two on it.
+  const restDay = isWeekend(date) && !isPast && open.every((t) => t.fixed);
   // Once every to-do has its time, what does not fit was booked in part on purpose: it carries over, it is not a warning.
   const todo = open.filter((t) => !t.fixed && !estimateUsedUp(t));
   const booked = isToday && todo.length > 0 && todo.every((t) => t.start !== null);
@@ -70,6 +72,12 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
         </span>
       </button>
 
+      {(log?.allDay?.length ?? 0) > 0 && (
+        <p className="col-allday" title="All day, from your calendar">
+          {[...new Set(log!.allDay!.map((x) => x.title))].join(', ')} · all day
+        </p>
+      )}
+
       <div className="col-load">
         <LoadBar planned={booked ? Math.min(planned, capacity) : planned} capacity={capacity} />
         <span
@@ -78,6 +86,10 @@ export function DayColumn({ date, addRef }: { date: ISODate; addRef?: React.Ref<
         >
           {empty
             ? 'Nothing planned'
+            : restDay
+              ? fixed > 0
+                ? `${fmtMin(fixed)} of meetings`
+                : 'Nothing to do'
             : isPast
               ? doneCount === 0 && tracked < 1 && !log?.plannedAt
                 ? 'Not planned'

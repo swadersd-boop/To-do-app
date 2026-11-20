@@ -4,6 +4,7 @@ import type { Repeat, Task } from '../types';
 import { useStore } from '../store';
 import { useUI } from '../ui';
 import { deleteWithUndo } from '../actions';
+import { estimateUsedUp, leftOf } from '../lib/model';
 import { nextWorkday, relativeDay, weekStart } from '../lib/dates';
 import { fmtClock, parseClock } from '../lib/time';
 import { AddLine, CheckCircle, DurationInput, EstimateChip, useEscape, useTracked } from './bits';
@@ -144,6 +145,17 @@ function Drawer({ task, onClose }: { task: Task; onClose: () => void }) {
             <dd>
               <EstimateChip value={task.planned} onChange={(planned) => updateTask(task.id, { planned })} />
             </dd>
+
+            {(estimateUsedUp(task) || task.left) && !task.fixed && (
+              <>
+                <dt>Still needed</dt>
+                <dd className="row wrap">
+                  {/* Past the estimate, say what is left here; the estimate itself stays for Insights. */}
+                  <EstimateChip value={task.left ? Math.round(leftOf(task) ?? 0) : null} onChange={(min) => min !== null && useStore.getState().setLeft(task.id, min)} />
+                  {estimateUsedUp(task) && <span className="meta meta-warn">Past the estimate. How much is left?</span>}
+                </dd>
+              </>
+            )}
 
             <dt>Time spent</dt>
             <dd>

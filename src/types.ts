@@ -57,6 +57,8 @@ export interface Task {
   left?: { min: number; atSec: number } | null;
   /** Set on a meeting that came from a calendar file: which calendar, event and occurrence it is. */
   calendarKey?: string | null;
+  /** Which imported calendar the meeting came from. */
+  calendarId?: string | null;
   /** Each run of the timer on this task, as epoch milliseconds: when the work actually happened. */
   sessions?: { from: number; to: number }[];
   /** Later blocks of the same task on the same day, when the plan splits it around meetings or breaks. */
@@ -97,6 +99,8 @@ export interface DayLog {
   carriedTitles?: string[];
   /** Work done this day on tasks that then moved on: where it sat on the timeline and for how long. */
   carriedWork?: { title: string; start: number | null; sec: number }[];
+  /** All-day events from an imported calendar, such as time off or an offsite. */
+  allDay?: { title: string; cal: string }[];
 }
 
 export interface Settings {

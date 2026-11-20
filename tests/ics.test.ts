@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCalendar } from '../src/lib/ics';
+import { parseCalendar, readCalendar } from '../src/lib/ics';
 import { toISO } from '../src/lib/dates';
 
 // Expectations go through this machine's own time zone, so the tests pass wherever they run.
@@ -88,5 +88,32 @@ describe('parseCalendar', () => {
     expect(on('Every other week')).toEqual(['2026-11-16', '2026-11-30']);
     expect(on('Third Thursday')).toEqual(['2026-11-19']);
     expect(on('Until Tuesday')).toEqual(['2026-11-16', '2026-11-17']);
+  });
+});
+
+describe('readCalendar', () => {
+  it('reads Outlook zone names, keys by UID alone, skips meetings the owner declined, and keeps all-day events', () => {
+    const text = cal(
+      'X-WR-CALNAME:sam@example.com',
+      ['BEGIN:VEVENT', 'UID:ny', 'SUMMARY:New York sync', 'DTSTART;TZID=Eastern Standard Time:20261118T090000', 'DTEND;TZID=Eastern Standard Time:20261118T093000', 'END:VEVENT'].join('\r\n'),
+      ['BEGIN:VEVENT', 'UID:sf', 'SUMMARY:SF sync', 'DTSTART;TZID="Pacific Standard Time":20261119T080000', 'DTEND;TZID="Pacific Standard Time":20261119T083000', 'END:VEVENT'].join('\r\n'),
+      [
+        'BEGIN:VEVENT', 'UID:demo', 'SUMMARY:Vendor demo', 'DTSTART:20261119T090000Z', 'DTEND:20261119T100000Z',
+        'ATTENDEE;CN=Sam;PARTSTAT=DECLINED:mailto:Sam@example.com', 'ATTENDEE;PARTSTAT=ACCEPTED:mailto:vendor@example.com', 'END:VEVENT',
+      ].join('\r\n'),
+      ['BEGIN:VEVENT', 'UID:ooo', 'SUMMARY:Out of office', 'DTSTART;VALUE=DATE:20261126', 'DTEND;VALUE=DATE:20261128', 'END:VEVENT'].join('\r\n'),
+    );
+    const read = readCalendar(text, '2026-11-16', '2026-11-29');
+    expect(read.name).toBe('sam@example.com');
+    // 09:00 in New York is 14:00 UTC; 08:00 in San Francisco is 16:00 UTC.
+    expect(read.meetings.map((m) => [m.title, m.date, m.start])).toEqual([
+      ['New York sync', local(Date.UTC(2026, 10, 18, 14, 0)).date, local(Date.UTC(2026, 10, 18, 14, 0)).start],
+      ['SF sync', local(Date.UTC(2026, 10, 19, 16, 0)).date, local(Date.UTC(2026, 10, 19, 16, 0)).start],
+    ]);
+    expect(read.meetings[0].key).toBe('ny');
+    expect(read.allDay).toEqual([
+      { date: '2026-11-26', title: 'Out of office' },
+      { date: '2026-11-27', title: 'Out of office' },
+    ]);
   });
 });

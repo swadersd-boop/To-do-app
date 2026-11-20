@@ -239,7 +239,7 @@ function Header({ onFocus }: { onFocus: () => void }) {
   const month = fromISO(ui.boardStart).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const planned = Boolean(log?.plannedAt);
   // On a weekend with nothing on the list, planning is not the thing to do next.
-  const restDay = useStore((st) => !st.settings.weekendRollover && isWeekend(ui.today) && !st.tasks.some((t) => t.date === ui.today && !t.done));
+  const restDay = useStore((st) => !st.settings.weekendRollover && isWeekend(ui.today) && !st.tasks.some((t) => t.date === ui.today && !t.done && !t.fixed));
   const closed = Boolean(log?.shutdownAt);
   // One button stands out at a time: plan in the morning, focus while you work, shut down near the end.
   const dayEnd = useStore((s) => s.settings.dayEnd);
@@ -487,7 +487,10 @@ function Planner() {
         useStore.setState({ days: beforeDays.current, tasks: now.map((t) => (t.id === id ? { ...t, trackedBefore: original.trackedBefore } : t)) });
       } else {
         const movedOn = (t: Task) => t.id === id && !t.done && t.date !== null && t.date <= today && (task.date === null || task.date > t.date);
-        useStore.setState(keepWorkOnDay(before.current, now, beforeDays.current, movedOn));
+        const recorded = keepWorkOnDay(before.current, now, beforeDays.current, movedOn);
+        // Dragged on to a later day by hand counts as moving on, the same as "Tomorrow".
+        const onward = movedOn(original);
+        useStore.setState(onward ? { ...recorded, tasks: recorded.tasks.map((t) => (t.id === id ? { ...t, rolled: t.rolled + 1 } : t)) } : recorded);
       }
     }
     before.current = null;

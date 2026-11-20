@@ -6,7 +6,8 @@ import { toISO } from './dates';
  * Outlook and Apple Calendar export. Handles time zones, repeating events
  * (daily, weekly, monthly, yearly, with INTERVAL, BYDAY, BYMONTHDAY, COUNT and
  * UNTIL), skipped dates (EXDATE), moved occurrences (RECURRENCE-ID) and
- * cancellations. All-day events are left out: they are not meetings.
+ * cancellations. All-day events are not meetings, so they come back apart,
+ * to show on their day. Meetings the calendar's owner declined are left out.
  */
 
 export interface Meeting {
@@ -48,6 +49,68 @@ interface VEvent {
   exdates: number[];
   recurrenceId: number | null;
   cancelled: boolean;
+  /** Email addresses of attendees who said no. */
+  declined: string[];
+}
+
+/**
+ * Outlook writes Windows zone names. The common ones, by the IANA name a
+ * browser knows. Anything else falls back to the zone's own rules, if any, or local time.
+ */
+const WINDOWS_ZONES: Record<string, string> = {
+  'Dateline Standard Time': 'Etc/GMT+12',
+  'Hawaiian Standard Time': 'Pacific/Honolulu',
+  'Alaskan Standard Time': 'America/Anchorage',
+  'Pacific Standard Time': 'America/Los_Angeles',
+  'Mountain Standard Time': 'America/Denver',
+  'US Mountain Standard Time': 'America/Phoenix',
+  'Central Standard Time': 'America/Chicago',
+  'Central America Standard Time': 'America/Guatemala',
+  'Eastern Standard Time': 'America/New_York',
+  'Atlantic Standard Time': 'America/Halifax',
+  'Newfoundland Standard Time': 'America/St_Johns',
+  'SA Pacific Standard Time': 'America/Bogota',
+  'E. South America Standard Time': 'America/Sao_Paulo',
+  'Argentina Standard Time': 'America/Argentina/Buenos_Aires',
+  'UTC': 'UTC',
+  'Coordinated Universal Time': 'UTC',
+  'GMT Standard Time': 'Europe/London',
+  'Greenwich Standard Time': 'Atlantic/Reykjavik',
+  'W. Europe Standard Time': 'Europe/Berlin',
+  'Romance Standard Time': 'Europe/Paris',
+  'Central Europe Standard Time': 'Europe/Budapest',
+  'Central European Standard Time': 'Europe/Warsaw',
+  'E. Europe Standard Time': 'Europe/Chisinau',
+  'FLE Standard Time': 'Europe/Kyiv',
+  'GTB Standard Time': 'Europe/Bucharest',
+  'Turkey Standard Time': 'Europe/Istanbul',
+  'Israel Standard Time': 'Asia/Jerusalem',
+  'South Africa Standard Time': 'Africa/Johannesburg',
+  'Egypt Standard Time': 'Africa/Cairo',
+  'Russian Standard Time': 'Europe/Moscow',
+  'Arabian Standard Time': 'Asia/Dubai',
+  'Arab Standard Time': 'Asia/Riyadh',
+  'Iran Standard Time': 'Asia/Tehran',
+  'Pakistan Standard Time': 'Asia/Karachi',
+  'India Standard Time': 'Asia/Kolkata',
+  'Bangladesh Standard Time': 'Asia/Dhaka',
+  'SE Asia Standard Time': 'Asia/Bangkok',
+  'China Standard Time': 'Asia/Shanghai',
+  'Singapore Standard Time': 'Asia/Singapore',
+  'Taipei Standard Time': 'Asia/Taipei',
+  'W. Australia Standard Time': 'Australia/Perth',
+  'Tokyo Standard Time': 'Asia/Tokyo',
+  'Korea Standard Time': 'Asia/Seoul',
+  'Cen. Australia Standard Time': 'Australia/Adelaide',
+  'AUS Eastern Standard Time': 'Australia/Sydney',
+  'E. Australia Standard Time': 'Australia/Brisbane',
+  'New Zealand Standard Time': 'Pacific/Auckland',
+};
+
+/** A zone name as a browser knows it: IANA names pass through, Windows names are mapped, quotes and Outlook's prefixes dropped. */
+function zoneName(tz: string): string {
+  const clean = tz.replace(/^"|"$/g, '').replace(/^\(UTC[^)]*\)\s*/, '').trim();
+  return WINDOWS_ZONES[clean] ?? clean;
 }
 
 /** Joins folded lines and splits each into name, parameters and value. */
@@ -90,7 +153,7 @@ function stamp(p: Prop, value = p.value): Stamp | null {
     d: +m[3],
     h: allDay ? 0 : +m[4],
     mi: allDay ? 0 : +m[5],
-    tz: m[7] ? 'UTC' : (p.params.TZID ?? null),
+    tz: m[7] ? 'UTC' : p.params.TZID ? zoneName(p.params.TZID) : null,
     allDay,
   };
 }
@@ -141,7 +204,7 @@ function events(text: string): VEvent[] {
   let depth = 0;
   for (const p of props(text)) {
     if (p.name === 'BEGIN' && p.value.toUpperCase() === 'VEVENT') {
-      cur = { exdates: [], rrule: null, recurrenceId: null, cancelled: false, end: null, duration: null, summary: '' };
+      cur = { exdates: [], rrule: null, recurrenceId: null, cancelled: false, end: null, duration: null, summary: '', declined: [] };
       depth = 0;
       continue;
     }
@@ -159,6 +222,8 @@ function events(text: string): VEvent[] {
       else if (p.name === 'DTEND') cur.end = stamp(p);
       else if (p.name === 'DURATION') cur.duration = duration(p.value.trim());
       else if (p.name === 'STATUS') cur.cancelled = p.value.trim().toUpperCase() === 'CANCELLED';
+      else if (p.name === 'ATTENDEE' && (p.params.PARTSTAT ?? '').toUpperCase() === 'DECLINED')
+        cur.declined!.push(p.value.replace(/^mailto:/i, '').trim().toLowerCase());
       else if (p.name === 'RRULE') cur.rrule = Object.fromEntries(p.value.split(';').map((x) => x.split('=') as [string, string]).map(([k, v]) => [k.toUpperCase(), v]));
       else if (p.name === 'EXDATE')
         for (const v of p.value.split(',')) {
@@ -239,12 +304,24 @@ function occurrences(e: VEvent, last: number): Stamp[] {
   return out;
 }
 
+/** What one calendar file holds for a stretch of days. */
+export interface CalendarRead {
+  /** The calendar's own name (Google writes the owner's email here), if the file gives one. */
+  name: string | null;
+  meetings: Meeting[];
+  /** All-day events, such as time off or an offsite, one entry per day. */
+  allDay: { date: ISODate; title: string }[];
+}
+
 /**
- * The meetings in an .ics file that fall on days `from` to `to` (inclusive),
- * in this browser's time zone. `source` names the calendar, so meetings from
- * two calendars never replace each other.
+ * Reads the meetings in an .ics file that fall on days `from` to `to`
+ * (inclusive), in this browser's time zone. Keys come from the events'
+ * own UIDs, so the same calendar saved under another file name still
+ * matches what is already on the board.
  */
-export function parseCalendar(text: string, from: ISODate, to: ISODate, source = 'calendar'): Meeting[] {
+export function readCalendar(text: string, from: ISODate, to: ISODate): CalendarRead {
+  const name = props(text).find((p) => p.name === 'X-WR-CALNAME')?.value.trim() || null;
+  const owner = name && name.includes('@') ? name.toLowerCase() : null;
   const all = events(text);
   const [fy, fm, fd] = from.split('-').map(Number);
   const [ty, tm, td] = to.split('-').map(Number);
@@ -253,9 +330,24 @@ export function parseCalendar(text: string, from: ISODate, to: ISODate, source =
   const lastLocal = new Date(ty, tm - 1, td, 23, 59).getTime();
   // Occurrences moved or changed on their own, by event and original start.
   const moved = new Set(all.filter((e) => e.recurrenceId !== null).map((e) => `${e.uid}|${e.recurrenceId}`));
-  const out: Meeting[] = [];
+  const skipped = (e: VEvent, at: number) =>
+    e.recurrenceId === null && (e.exdates.some((x) => Math.abs(x - at) < 60_000) || moved.has(`${e.uid}|${at}`));
+  const meetings: Meeting[] = [];
+  const allDay: { date: ISODate; title: string }[] = [];
   for (const e of all) {
-    if (e.start.allDay || e.cancelled) continue;
+    if (e.cancelled || (owner && e.declined.includes(owner))) continue;
+    if (e.start.allDay) {
+      // Every day the event covers: DTEND is the day after the last one.
+      const days = e.end?.allDay ? Math.max(1, Math.round((Date.UTC(e.end.y, e.end.m - 1, e.end.d) - Date.UTC(e.start.y, e.start.m - 1, e.start.d)) / 86_400_000)) : 1;
+      for (const s of e.recurrenceId !== null ? [e.start] : occurrences(e, last)) {
+        if (skipped(e, toEpoch(s))) continue;
+        for (let i = 0; i < days; i++) {
+          const date = toISO(new Date(s.y, s.m - 1, s.d + i, 12));
+          if (date >= from && date <= to) allDay.push({ date, title: e.summary || 'Busy' });
+        }
+      }
+      continue;
+    }
     const startEpoch = toEpoch(e.start);
     const length =
       e.duration !== null ? e.duration : e.end && !e.end.allDay ? Math.round((toEpoch(e.end) - startEpoch) / 60_000) : 30;
@@ -263,13 +355,12 @@ export function parseCalendar(text: string, from: ISODate, to: ISODate, source =
     const stamps = e.recurrenceId !== null ? [e.start] : occurrences(e, last);
     for (const s of stamps) {
       const at = toEpoch(s);
-      if (at < firstLocal || at > lastLocal) continue;
-      if (e.recurrenceId === null && (e.exdates.some((x) => Math.abs(x - at) < 60_000) || moved.has(`${e.uid}|${at}`))) continue;
+      if (at < firstLocal || at > lastLocal || skipped(e, at)) continue;
       const local = new Date(at);
       // A one-off event is itself, wherever it moves. One occurrence of a series is its original slot in the series.
       const repeating = e.rrule !== null || e.recurrenceId !== null;
-      out.push({
-        key: repeating ? `${source}|${e.uid}|${e.recurrenceId ?? at}` : `${source}|${e.uid}`,
+      meetings.push({
+        key: repeating ? `${e.uid}|${e.recurrenceId ?? at}` : e.uid,
         title: e.summary || 'Busy',
         date: toISO(local),
         start: local.getHours() * 60 + local.getMinutes(),
@@ -277,6 +368,11 @@ export function parseCalendar(text: string, from: ISODate, to: ISODate, source =
       });
     }
   }
-  // A moved occurrence that was then cancelled leaves nothing; the rest by time.
-  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.start - b.start));
+  meetings.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.start - b.start));
+  return { name, meetings, allDay };
+}
+
+/** Only the meetings, for days `from` to `to`. */
+export function parseCalendar(text: string, from: ISODate, to: ISODate): Meeting[] {
+  return readCalendar(text, from, to).meetings;
 }
