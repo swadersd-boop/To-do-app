@@ -110,7 +110,7 @@ export function TaskCardView({ task, dragging = false }: { task: Task; dragging?
         <EstimateChip
           value={task.planned}
           // Past the estimate, the number picked is what is still needed; the estimate stays as it was.
-          onChange={(min) => (estimateUsedUp(task) && min !== null ? useStore.getState().setLeft(task.id, min) : updateTask(task.id, { planned: min }))}
+          onChange={(min) => ((estimateUsedUp(task) || task.left) && min !== null ? useStore.getState().setLeft(task.id, min) : updateTask(task.id, { planned: min }))}
           actualMin={(isPastDay ? todaySec(task) : seconds) / 60}
         />
       </div>

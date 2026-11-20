@@ -36,7 +36,8 @@ export function leftOf(t: Task): number | null {
 /** Worked for at least as long as the estimate (or what you said was left), and not done: it needs another look. */
 export function estimateUsedUp(t: Task): boolean {
   const left = leftOf(t);
-  return !t.done && left !== null && left <= 0;
+  // Less than a minute left is nothing left: a stray second must not book a quarter hour.
+  return !t.done && left !== null && left < 1;
 }
 
 /** A multiplier on a task's estimate, for planning at the pace history shows. */

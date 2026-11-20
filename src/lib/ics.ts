@@ -36,6 +36,8 @@ interface Stamp {
   mi: number;
   /** Time zone name, 'UTC', or null for floating (local) time. */
   tz: string | null;
+  /** The zone name exactly as the file wrote it, to look up the file's own zone definitions. */
+  raw?: string;
   allDay: boolean;
 }
 
@@ -51,6 +53,97 @@ interface VEvent {
   cancelled: boolean;
   /** Email addresses of attendees who said no. */
   declined: string[];
+  /** Marked free (TRANSP:TRANSPARENT, or Outlook's busy status FREE): it does not take time. */
+  free: boolean;
+}
+
+/** One half of a zone the file defines itself: its offset and the yearly rule for when it starts. */
+interface ZoneRule {
+  offset: number;
+  month: number;
+  /** Which weekday of the month (1 = first, -1 = last), and which weekday. */
+  n: number;
+  wd: number;
+  h: number;
+  mi: number;
+}
+
+/** Zones defined in the file being read (VTIMEZONE), for names a browser does not know. Set by readCalendar. */
+let fileZones = new Map<string, { std: ZoneRule; dst?: ZoneRule }>();
+
+const offsetMinutes = (v: string) => {
+  const m = v.trim().match(/^([+-])(\d{2})(\d{2})/);
+  return m ? (m[1] === '-' ? -1 : 1) * (+m[2] * 60 + +m[3]) : 0;
+};
+
+function readZones(all: Prop[]): Map<string, { std: ZoneRule; dst?: ZoneRule }> {
+  const out = new Map<string, { std: ZoneRule; dst?: ZoneRule }>();
+  let tzid: string | null = null;
+  let part: 'STANDARD' | 'DAYLIGHT' | null = null;
+  let rule: Partial<ZoneRule> = {};
+  let found: { std?: ZoneRule; dst?: ZoneRule } = {};
+  for (const p of all) {
+    const v = p.value.trim().toUpperCase();
+    if (p.name === 'BEGIN' && v === 'VTIMEZONE') {
+      tzid = null;
+      found = {};
+    } else if (p.name === 'TZID' && part === null) tzid = p.value.trim();
+    else if (p.name === 'BEGIN' && (v === 'STANDARD' || v === 'DAYLIGHT')) {
+      part = v;
+      rule = {};
+    } else if (part && p.name === 'TZOFFSETTO') rule.offset = offsetMinutes(p.value);
+    else if (part && p.name === 'DTSTART') {
+      const m = p.value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
+      if (m) {
+        rule.month ??= +m[2];
+        rule.h = +m[4];
+        rule.mi = +m[5];
+        const wd = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+        rule.wd ??= wd;
+        rule.n ??= Math.ceil(+m[3] / 7);
+      }
+    } else if (part && p.name === 'RRULE') {
+      const r = Object.fromEntries(p.value.split(';').map((x) => x.split('=') as [string, string]));
+      if (r.BYMONTH) rule.month = Number(r.BYMONTH);
+      const b = (r.BYDAY ?? '').match(/^([+-]?\d+)?([A-Z]{2})$/);
+      if (b) {
+        rule.n = b[1] ? Number(b[1]) : 1;
+        rule.wd = DAYS.indexOf(b[2]);
+      }
+    } else if (p.name === 'END' && part && v === part) {
+      const done = { offset: 0, month: 1, n: 1, wd: 0, h: 0, mi: 0, ...rule } as ZoneRule;
+      if (part === 'STANDARD') found.std = done;
+      else found.dst = done;
+      part = null;
+    } else if (p.name === 'END' && v === 'VTIMEZONE') {
+      const std = found.std ?? found.dst;
+      if (tzid && std) out.set(tzid, { std, dst: found.std ? found.dst : undefined });
+      tzid = null;
+    }
+  }
+  return out;
+}
+
+/** The day of the month a zone rule falls on in a year: the nth (or last) given weekday. */
+function ruleDay(y: number, r: ZoneRule): number {
+  const inMonth = new Date(Date.UTC(y, r.month, 0)).getUTCDate();
+  if (r.n > 0) {
+    const first = new Date(Date.UTC(y, r.month - 1, 1)).getUTCDay();
+    return Math.min(inMonth, 1 + ((r.wd - first + 7) % 7) + (r.n - 1) * 7);
+  }
+  const last = new Date(Date.UTC(y, r.month - 1, inMonth)).getUTCDay();
+  return inMonth - ((last - r.wd + 7) % 7) + (r.n + 1) * 7;
+}
+
+/** The offset of a zone defined in the file, at a wall-clock time. */
+function fileOffset(z: { std: ZoneRule; dst?: ZoneRule }, s: Stamp): number {
+  if (!z.dst) return z.std.offset;
+  const key = (m: number, d: number, h: number, mi: number) => ((m * 32 + d) * 24 + h) * 60 + mi;
+  const now = key(s.m, s.d, s.h, s.mi);
+  const dst = key(z.dst.month, ruleDay(s.y, z.dst), z.dst.h, z.dst.mi);
+  const std = key(z.std.month, ruleDay(s.y, z.std), z.std.h, z.std.mi);
+  const summer = dst < std ? now >= dst && now < std : now >= dst || now < std;
+  return summer ? z.dst.offset : z.std.offset;
 }
 
 /**
@@ -154,6 +247,7 @@ function stamp(p: Prop, value = p.value): Stamp | null {
     h: allDay ? 0 : +m[4],
     mi: allDay ? 0 : +m[5],
     tz: m[7] ? 'UTC' : p.params.TZID ? zoneName(p.params.TZID) : null,
+    raw: p.params.TZID,
     allDay,
   };
 }
@@ -185,7 +279,14 @@ function toEpoch(s: Stamp): number {
   if (s.tz === null) return local;
   const guess = Date.UTC(s.y, s.m - 1, s.d, s.h, s.mi);
   const first = zoneOffset(guess, s.tz);
-  if (first === null) return local;
+  if (first === null) {
+    // Not a zone the browser knows: the file's own definition, then the "(UTC-05:00)" Outlook puts in front, then local time.
+    const own = fileZones.get(s.raw ?? '') ?? fileZones.get(s.tz);
+    if (own) return guess - fileOffset(own, s) * 60_000;
+    const prefix = (s.raw ?? '').match(/\(UTC([+-])(\d{1,2}):?(\d{2})\)/);
+    if (prefix) return guess - (prefix[1] === '-' ? -1 : 1) * (+prefix[2] * 60 + +prefix[3]) * 60_000;
+    return local;
+  }
   const at = guess - first * 60_000;
   // Once more, in case the guess fell on the other side of a daylight saving change.
   const second = zoneOffset(at, s.tz) ?? first;
@@ -202,9 +303,11 @@ function events(text: string): VEvent[] {
   const out: VEvent[] = [];
   let cur: Partial<VEvent> | null = null;
   let depth = 0;
-  for (const p of props(text)) {
+  const all = props(text);
+  fileZones = readZones(all);
+  for (const p of all) {
     if (p.name === 'BEGIN' && p.value.toUpperCase() === 'VEVENT') {
-      cur = { exdates: [], rrule: null, recurrenceId: null, cancelled: false, end: null, duration: null, summary: '', declined: [] };
+      cur = { exdates: [], rrule: null, recurrenceId: null, cancelled: false, end: null, duration: null, summary: '', declined: [], free: false };
       depth = 0;
       continue;
     }
@@ -222,6 +325,8 @@ function events(text: string): VEvent[] {
       else if (p.name === 'DTEND') cur.end = stamp(p);
       else if (p.name === 'DURATION') cur.duration = duration(p.value.trim());
       else if (p.name === 'STATUS') cur.cancelled = p.value.trim().toUpperCase() === 'CANCELLED';
+      else if (p.name === 'TRANSP') cur.free = cur.free || p.value.trim().toUpperCase() === 'TRANSPARENT';
+      else if (p.name === 'X-MICROSOFT-CDO-BUSYSTATUS') cur.free = p.value.trim().toUpperCase() === 'FREE';
       else if (p.name === 'ATTENDEE' && (p.params.PARTSTAT ?? '').toUpperCase() === 'DECLINED')
         cur.declined!.push(p.value.replace(/^mailto:/i, '').trim().toLowerCase());
       else if (p.name === 'RRULE') cur.rrule = Object.fromEntries(p.value.split(';').map((x) => x.split('=') as [string, string]).map(([k, v]) => [k.toUpperCase(), v]));
@@ -290,11 +395,28 @@ function occurrences(e: VEvent, last: number): Stamp[] {
     return days === 0;
   };
 
+  // BYSETPOS picks from the days a month's rule matches, e.g. -1 with BYDAY=MO..FR is the last weekday.
+  const setPos = (r.BYSETPOS ?? '').split(',').filter(Boolean).map(Number);
+  const monthSets = new Map<string, number[]>();
+  const fits = (t: number): boolean => {
+    if (!matches(t)) return false;
+    if (setPos.length === 0 || freq !== 'MONTHLY') return true;
+    const c = ymd(t);
+    const k = `${c.y}-${c.m}`;
+    if (!monthSets.has(k)) {
+      const inMonth = new Date(Date.UTC(c.y, c.m, 0)).getUTCDate();
+      monthSets.set(k, Array.from({ length: inMonth }, (_, i) => i + 1).filter((d) => matches(Date.UTC(c.y, c.m - 1, d))));
+    }
+    const days = monthSets.get(k)!;
+    const at = days.indexOf(c.d);
+    return setPos.some((pos) => (pos > 0 ? at === pos - 1 : at === days.length + pos));
+  };
+
   const out: Stamp[] = [];
   let seen = 0;
   // Day by day is simple and safe; even a weekly meeting from years back is a few thousand steps.
   for (let t = first; t <= last + 86_400_000 && seen < count; t += 86_400_000) {
-    if (!matches(t)) continue;
+    if (!fits(t)) continue;
     const c = ymd(t);
     const s: Stamp = { ...e.start, y: c.y, m: c.m, d: c.d };
     if (toEpoch(s) > untilEpoch) break;
@@ -336,6 +458,8 @@ export function readCalendar(text: string, from: ISODate, to: ISODate): Calendar
   const allDay: { date: ISODate; title: string }[] = [];
   for (const e of all) {
     if (e.cancelled || (owner && e.declined.includes(owner))) continue;
+    // A free event (focus time, a reminder) is not a meeting and takes no time; an all-day one still shows.
+    if (e.free && !e.start.allDay) continue;
     if (e.start.allDay) {
       // Every day the event covers: DTEND is the day after the last one.
       const days = e.end?.allDay ? Math.max(1, Math.round((Date.UTC(e.end.y, e.end.m - 1, e.end.d) - Date.UTC(e.start.y, e.start.m - 1, e.start.d)) / 86_400_000)) : 1;

@@ -1,7 +1,8 @@
 import { useMemo, useRef } from 'react';
 import { Download, Trash2, Upload } from 'lucide-react';
-import { CHANNEL_COLORS, isPlannerData, snapshot, useStore } from '../store';
-import { CalendarButton, importedWhen } from './CalendarImport';
+import { CHANNEL_COLORS, isPlannerData, useStore } from '../store';
+import { CalendarButton, importedList } from './CalendarImport';
+import { downloadBackup } from '../actions';
 import { useUI } from '../ui';
 import { addDays, shortDate, weekStart, weekdayName } from '../lib/dates';
 import { fmtClock, fmtMin } from '../lib/time';
@@ -17,14 +18,7 @@ export function Settings() {
   const notify = useUI((s) => s.notify);
   const file = useRef<HTMLInputElement>(null);
 
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify(snapshot(), null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `kalm-backup-${useUI.getState().today}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  const exportData = downloadBackup;
 
   const onImport = async (f: File | undefined) => {
     if (!f) return;
@@ -190,10 +184,11 @@ export function Settings() {
         </p>
         <div className="row wrap">
           <CalendarButton />
-          {settings.calendarImport && (
-            <span className="muted">
-              Last: {settings.calendarImport.name}, {importedWhen(settings.calendarImport.at)}
-            </span>
+          {settings.calendarImport && <span className="muted">Imported: {importedList(settings.calendarImports, settings.calendarImport)}</span>}
+          {(settings.calendarHidden?.length ?? 0) > 0 && (
+            <button type="button" className="btn btn-quiet" onClick={() => setSettings({ calendarHidden: [] })}>
+              Show {settings.calendarHidden!.length} deleted {settings.calendarHidden!.length === 1 ? 'meeting' : 'meetings'} again on the next import
+            </button>
           )}
         </div>
 

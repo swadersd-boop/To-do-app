@@ -429,7 +429,11 @@ export function timerAsk(timer: Timer, task: Task, tasks: Task[]): TimerAsk {
     const begins = startOfDay.getTime() + meeting.start! * 60_000;
     if (begins + 5 * 60_000 < long) return { at: begins + 5 * 60_000, stopAt: begins, meeting };
   }
-  return { at: long, stopAt: long, meeting: null };
+  // A timer that ran on through lunch most likely stopped being work when lunch began.
+  const { lunchStart } = useStore.getState().settings;
+  const lunch = lunchStart === null || lunchStart === undefined ? null : startOfDay.getTime() + lunchStart * 60_000;
+  const stopAt = lunch !== null && lunch > since && lunch < long ? lunch : long;
+  return { at: long, stopAt, meeting: null };
 }
 
 /** The "still working?" question for a timer that has run too long or into a meeting, or nothing. */

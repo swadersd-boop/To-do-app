@@ -24,8 +24,10 @@ export async function importCalendarFile(file: File): Promise<void> {
   }
   const to = addDays(today, CALENDAR_DAYS - 1);
   const read = readCalendar(text, today, to);
-  // The calendar's own name tells calendars apart; without one, the file name without the " (1)" a second download gets.
-  const cal = (read.name ?? file.name.replace(/\.ics$/i, '').replace(/\s*\(\d+\)$/, '')).toLowerCase();
+  // Google names a calendar by its owner's email, which tells calendars apart. Outlook calls every one "Calendar",
+  // so then the file name does, without the " (1)" a second download gets.
+  const fileId = file.name.replace(/\.ics$/i, '').replace(/\s*\(\d+\)$/, '');
+  const cal = (read.name && read.name.includes('@') ? read.name : fileId).toLowerCase();
   const before = useStore.getState().tasks;
   const beforeDays = useStore.getState().days;
   const { added, updated, removed, replaced } = useStore.getState().importCalendar(read, today, to, cal, file.name);
@@ -45,6 +47,16 @@ export async function importCalendarFile(file: File): Promise<void> {
       : `Your board already has every meeting in ${file.name} for the next two weeks.`) + took,
     { label: 'Undo', run: () => useStore.setState({ tasks: before, days: beforeDays }) },
   );
+}
+
+/** Every imported calendar in one line: "work.ics today, personal.ics 3 days ago". */
+export function importedList(imports: Record<string, { name: string; at: string }> | undefined, last?: { name: string; at: string } | null): string {
+  const list = Object.values(imports ?? {});
+  const all = list.length > 0 ? list : last ? [last] : [];
+  return all
+    .sort((a, b) => (a.at < b.at ? 1 : -1))
+    .map((x) => `${x.name} ${importedWhen(x.at)}`)
+    .join(', ');
 }
 
 /** "Imported today", "Imported 3 days ago": how fresh the meetings on the board are. */

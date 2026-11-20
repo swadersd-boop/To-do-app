@@ -126,7 +126,8 @@ export function workedMin(t: Task): number {
   if (tracked >= 1) return tracked;
   if (!t.done) return 0;
   if (t.start !== null) return blocksOf(t).reduce((sum, b) => sum + b.end - b.start, 0);
-  return Math.max(0, (t.planned ?? 0) - (t.trackedBefore ?? 0) / 60);
+  const rest = (t.planned ?? 0) - (t.trackedBefore ?? 0) / 60;
+  return rest < 1 ? 0 : rest;
 }
 
 /**

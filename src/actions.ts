@@ -1,5 +1,5 @@
 import type { ISODate } from './types';
-import { useStore } from './store';
+import { snapshot, useStore } from './store';
 import { useUI } from './ui';
 import { parseQuickAdd } from './lib/parse';
 import { fmtClock } from './lib/time';
@@ -53,7 +53,10 @@ export function deleteWithUndo(id: string): void {
   const removed = store.deleteTask(id);
   if (!removed) return;
   if (ui.openTaskId === id) ui.openTask(null);
-  ui.notify('Task deleted', { label: 'Undo', run: () => useStore.getState().restoreTask(removed) });
+  ui.notify(removed.calendarKey ? 'Meeting deleted. Importing the calendar again will not bring it back.' : 'Task deleted', {
+    label: 'Undo',
+    run: () => useStore.getState().restoreTask(removed),
+  });
 }
 
 export async function copyText(text: string, message = 'Copied'): Promise<void> {
@@ -112,4 +115,33 @@ export function deferOne(id: string): void {
     const title = before.find((t) => t.id === id)?.title ?? 'The task';
     notify(`"${title}" went to the backlog after moving on too often.`, { label: 'Undo', run: () => useStore.setState({ tasks: before, days: beforeDays }) });
   }
+}
+
+/** Saves everything as a JSON file, and remembers when, for the weekly reminder. */
+export function downloadBackup(): void {
+  const blob = new Blob([JSON.stringify(snapshot(), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `kalm-backup-${useUI.getState().today}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  useStore.getState().setSettings({ backupAt: new Date().toISOString() });
+}
+
+/**
+ * Everything lives in this browser, so once a week, when there is real work to
+ * lose, the app offers a backup. At most once a day, and never before a week of use.
+ */
+export function maybeNudgeBackup(): void {
+  const { settings, tasks, setSettings } = useStore.getState();
+  const today = useUI.getState().today;
+  const real = tasks.filter((t) => !t.example);
+  if (real.length < 10 || settings.backupNudgedOn === today) return;
+  const since = settings.backupAt ?? real.reduce((min, t) => (t.createdAt < min ? t.createdAt : min), real[0].createdAt);
+  if (Date.now() - new Date(since).getTime() < 7 * 86_400_000) return;
+  setSettings({ backupNudgedOn: today });
+  useUI.getState().notify(
+    settings.backupAt ? 'Your last backup is over a week old. Everything lives in this browser only.' : 'Everything lives in this browser only. Save a backup now and then.',
+    { label: 'Download backup', run: downloadBackup },
+  );
 }

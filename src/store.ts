@@ -379,11 +379,21 @@ export const useStore = create<Store>()(
         set((s) => ({
           tasks: s.tasks.filter((t) => t.id !== id),
           timer: s.timer?.taskId === id ? null : s.timer,
+          // A calendar meeting you deleted stays deleted when the calendar is imported again.
+          ...(task?.calendarKey ? { settings: { ...s.settings, calendarHidden: [...(s.settings.calendarHidden ?? []), task.calendarKey].slice(-500) } } : {}),
         }));
         return task;
       },
 
-      restoreTask: (task) => set((s) => (s.tasks.some((t) => t.id === task.id) ? s : { tasks: [...s.tasks, task] })),
+      restoreTask: (task) =>
+        set((s) =>
+          s.tasks.some((t) => t.id === task.id)
+            ? s
+            : {
+                tasks: [...s.tasks, task],
+                ...(task.calendarKey ? { settings: { ...s.settings, calendarHidden: (s.settings.calendarHidden ?? []).filter((k) => k !== task.calendarKey) } } : {}),
+              },
+        ),
 
       toggleDone: (id) =>
         set((s) => {
@@ -537,7 +547,9 @@ export const useStore = create<Store>()(
         const replaced = [...new Set(series.map((t) => t.title))];
         tasks = tasks.flatMap((t) => (series.includes(t) ? (t.actualSec > 0 ? [{ ...t, repeat: null }] : []) : [t]));
 
+        const hidden = new Set(s.settings.calendarHidden ?? []);
         for (const m of meetings) {
+          if (hidden.has(m.key)) continue;
           const mine = tasks.find((t) => t.calendarKey === m.key);
           if (mine) {
             const changed = mine.title !== m.title || mine.date !== m.date || mine.start !== m.start || mine.planned !== m.length;
@@ -599,7 +611,12 @@ export const useStore = create<Store>()(
           const mineAllDay = read.allDay.filter((x) => x.date === d).map((x) => ({ title: x.title, cal }));
           if (others.length + mineAllDay.length > 0 || days[d]?.allDay) days[d] = { ...days[d], allDay: [...others, ...mineAllDay] };
         }
-        set({ tasks, days, settings: { ...s.settings, calendarImport: { name, at: new Date().toISOString() } } });
+        const at = new Date().toISOString();
+        set({
+          tasks,
+          days,
+          settings: { ...s.settings, calendarImport: { name, at }, calendarImports: { ...(s.settings.calendarImports ?? {}), [cal]: { name, at } } },
+        });
         return { added, updated, removed: gone.length, replaced };
       },
 

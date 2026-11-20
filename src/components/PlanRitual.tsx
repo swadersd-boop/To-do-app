@@ -10,7 +10,7 @@ import { addDays, longDate, nextWorkday, relativeDay, weekStart, weekdayName } f
 import { fmtClock, fmtMin } from '../lib/time';
 import { fixedTotal, paceOf, weekSummary, workDone, workLeft } from '../lib/stats';
 import { partlyText, planText } from '../lib/summary';
-import { CalendarButton, importedWhen } from './CalendarImport';
+import { CalendarButton, importedList } from './CalendarImport';
 import { encodePlan } from '../lib/share';
 import { AddLine, ChannelPill, Dialog, EstimateChip, LoadBar } from './bits';
 import { ObjectiveList } from './Objectives';
@@ -349,7 +349,7 @@ export function PlanRitual() {
               )}
               <p className="muted hint row wrap">
                 {settings.calendarImport
-                  ? `Meetings from ${settings.calendarImport.name}, imported ${importedWhen(settings.calendarImport.at)}.`
+                  ? `Meetings imported from ${importedList(settings.calendarImports, settings.calendarImport)}.`
                   : 'Meetings in your calendar? Bring them in from an .ics file.'}
                 <CalendarButton label={settings.calendarImport ? 'Import again' : 'Import a calendar file'} quiet />
               </p>

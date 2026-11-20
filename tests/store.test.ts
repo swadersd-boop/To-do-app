@@ -507,6 +507,22 @@ describe('store', () => {
     expect(store().days[addDays(today, 1)].allDay).toEqual([{ title: 'Out of office', cal: 'work' }]);
   });
 
+  it('keeps a deleted calendar meeting deleted, and two calendars apart', () => {
+    const work = [{ key: 'call-uid', title: 'Client call', date: today, start: 840, length: 60 }];
+    const personal = [{ key: 'gym-uid', title: 'Gym', date: today, start: 1080, length: 60 }];
+    store().importCalendar(read(work), today, today, 'outlook-work', 'outlook-work.ics');
+    const call = store().tasks.find((t) => t.title === 'Client call')!;
+    store().deleteTask(call.id);
+    expect(store().importCalendar(read(work), today, today, 'outlook-work', 'outlook-work.ics').added).toBe(0);
+    expect(store().tasks.some((t) => t.title === 'Client call')).toBe(false);
+    // Undo brings it back for good.
+    store().restoreTask(call);
+    expect(store().settings.calendarHidden).toEqual([]);
+    // A second calendar does not clear the first.
+    expect(store().importCalendar(read(personal), today, today, 'outlook-personal', 'outlook-personal.ics')).toMatchObject({ added: 1, removed: 0 });
+    expect(store().tasks.filter((t) => t.calendarKey).map((t) => t.title).sort()).toEqual(['Client call', 'Gym']);
+  });
+
   it('imports calendar meetings once, updates them, and removes ones that were cancelled', () => {
     const d1 = today;
     const d2 = addDays(today, 1);

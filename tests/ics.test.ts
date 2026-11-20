@@ -117,3 +117,49 @@ describe('readCalendar', () => {
     ]);
   });
 });
+
+describe('readCalendar with Outlook quirks', () => {
+  const tzBlock = [
+    'BEGIN:VTIMEZONE',
+    'TZID:Customized Time Zone',
+    'BEGIN:STANDARD',
+    'DTSTART:16010101T020000',
+    'TZOFFSETFROM:-0400',
+    'TZOFFSETTO:-0500',
+    'RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=1SU;BYMONTH=11',
+    'END:STANDARD',
+    'BEGIN:DAYLIGHT',
+    'DTSTART:16010101T020000',
+    'TZOFFSETFROM:-0500',
+    'TZOFFSETTO:-0400',
+    'RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=2SU;BYMONTH=3',
+    'END:DAYLIGHT',
+    'END:VTIMEZONE',
+  ].join('\r\n');
+
+  it("uses the file's own zone definition, summer and winter, and the (UTC-05:00) prefix as a last resort", () => {
+    const text = cal(
+      tzBlock,
+      ['BEGIN:VEVENT', 'UID:w', 'SUMMARY:Winter', 'DTSTART;TZID="Customized Time Zone":20261118T090000', 'DTEND;TZID="Customized Time Zone":20261118T093000', 'END:VEVENT'].join('\r\n'),
+      ['BEGIN:VEVENT', 'UID:s', 'SUMMARY:Summer', 'DTSTART;TZID="Customized Time Zone":20260615T090000', 'DTEND;TZID="Customized Time Zone":20260615T093000', 'END:VEVENT'].join('\r\n'),
+      ['BEGIN:VEVENT', 'UID:p', 'SUMMARY:Prefix', 'DTSTART;TZID="(UTC-05:00) Eastern Time (US & Canada)":20261119T100000', 'DTEND;TZID="(UTC-05:00) Eastern Time (US & Canada)":20261119T103000', 'END:VEVENT'].join('\r\n'),
+    );
+    const at = (title: string, from: string, to: string) => readCalendar(text, from, to).meetings.find((m) => m.title === title)!;
+    expect(at('Winter', '2026-11-16', '2026-11-22')).toMatchObject(local(Date.UTC(2026, 10, 18, 14, 0)));
+    expect(at('Summer', '2026-06-15', '2026-06-15')).toMatchObject(local(Date.UTC(2026, 5, 15, 13, 0)));
+    expect(at('Prefix', '2026-11-16', '2026-11-22')).toMatchObject(local(Date.UTC(2026, 10, 19, 15, 0)));
+  });
+
+  it('applies BYSETPOS and leaves out events marked free', () => {
+    const text = cal(
+      ['BEGIN:VEVENT', 'UID:close', 'SUMMARY:Month-end close', 'DTSTART:20261030T150000', 'DTEND:20261030T153000', 'RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', 'END:VEVENT'].join('\r\n'),
+      ['BEGIN:VEVENT', 'UID:hold', 'SUMMARY:Hold: think time', 'DTSTART:20261118T130000', 'DTEND:20261118T140000', 'TRANSP:TRANSPARENT', 'X-MICROSOFT-CDO-BUSYSTATUS:FREE', 'END:VEVENT'].join('\r\n'),
+    );
+    const read = readCalendar(text, '2026-11-16', '2026-12-31');
+    // The last weekday of November is Monday 30, of December Thursday 31.
+    expect(read.meetings.map((m) => [m.title, m.date])).toEqual([
+      ['Month-end close', '2026-11-30'],
+      ['Month-end close', '2026-12-31'],
+    ]);
+  });
+});

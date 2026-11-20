@@ -2,7 +2,7 @@ import type { Channel, ISODate, Task } from '../types';
 import { longDate } from './dates';
 import { fmtClock, fmtMin } from './time';
 import { plannedTotal, todaySec, workDone, workedMin, workLeft } from './stats';
-import { estimateUsedUp, leftOf } from './model';
+import { estimateUsedUp, leftOf, needOf } from './model';
 
 const tag = (t: Task, channels: Channel[]) => {
   const c = channels.find((x) => x.id === t.channelId);
@@ -10,7 +10,16 @@ const tag = (t: Task, channels: Channel[]) => {
 };
 
 /** "(1h)", or "(1h left of 3h)" for a task already started. */
-function size(t: Task): string {
+function size(t: Task, pace?: (t: Task) => number): string {
+  const base = sizeOnly(t);
+  if (!pace || !base || t.fixed || estimateUsedUp(t)) return base;
+  // Planning at your pace books more than the estimate says; the line says so, so it matches the timeline.
+  const need = needOf(t, pace);
+  const left = leftOf(t) ?? 0;
+  return need - left >= 10 ? `${base.slice(0, -1)}, about ${fmtMin(need)} at your pace)` : base;
+}
+
+function sizeOnly(t: Task): string {
   if (!t.planned) return '';
   const done = t.actualSec / 60;
   if (done < 1) return ` (${fmtMin(t.planned)})`;
@@ -34,7 +43,7 @@ export function planText(
   if (intention.trim()) lines.push(`Focus: ${intention.trim()}`);
   lines.push('');
   tasks.forEach((t, i) =>
-    lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${size(t)}${partly[t.id] ? `, ${fmtMin(partly[t.id])} of it today` : ''}${tag(t, channels)}`),
+    lines.push(`${i + 1}. ${t.start !== null ? `${fmtClock(t.start)} ` : ''}${t.title}${size(t, pace)}${partly[t.id] ? `, ${fmtMin(partly[t.id])} of it today` : ''}${tag(t, channels)}`),
   );
   if (tasks.length === 0) lines.push('Nothing planned yet.');
   // The same measure as the plan: what the to-dos still need by their estimates, and at your pace when that differs.

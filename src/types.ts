@@ -123,6 +123,13 @@ export interface Settings {
   lunchLength?: number;
   /** The last calendar file imported: its name and when. */
   calendarImport?: { name: string; at: string } | null;
+  /** Every calendar imported, by its id: the file it last came from and when. */
+  calendarImports?: Record<string, { name: string; at: string }>;
+  /** Calendar meetings deleted from the board, so importing again does not bring them back. */
+  calendarHidden?: string[];
+  /** When a backup was last downloaded, and the day the app last reminded you to. */
+  backupAt?: string | null;
+  backupNudgedOn?: string | null;
 }
 
 export interface Timer {

@@ -4,8 +4,8 @@ import { useStore } from '../store';
 import { useUI } from '../ui';
 import { copyText, deferOne } from '../actions';
 import { estimateUsedUp, tasksOn } from '../lib/model';
-import { addDays, longDate, nextWorkday, relativeDay, weekdayName } from '../lib/dates';
-import { paceOf, todaySec, workDone, workLeft } from '../lib/stats';
+import { addDays, longDate, nextWorkday, relativeDay, weekStart, weekdayName } from '../lib/dates';
+import { paceOf, workDone, workedMin, workLeft } from '../lib/stats';
 import { fmtClock, fmtMin } from '../lib/time';
 import { shutdownText } from '../lib/summary';
 import { ChannelPill, CheckCircle, Dialog, DurationInput, EstimateChip } from './bits';
@@ -36,7 +36,12 @@ export function ShutdownRitual() {
   const tomorrow = nextWorkday(today, weekends);
   const nextDay = tomorrow === addDays(today, 1) ? 'tomorrow' : weekdayName(tomorrow);
   // Unfinished to-dos carry over on their own, so they are part of tomorrow's list too.
-  const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done && !t.fixed).length + open.length;
+  // Tasks that go to the backlog tonight are not on tomorrow's list.
+  const objectives = useStore((s) => s.objectives);
+  // Work for an open objective of this week is never parked, the same rule the rollover uses.
+  const kept = new Set(objectives.filter((o) => !o.done && o.weekStart === weekStart(today)).map((o) => o.id));
+  const parking = (t: (typeof open)[number]) => parkLimit !== null && t.rolled >= parkLimit && !(t.objectiveId && kept.has(t.objectiveId));
+  const tomorrowCount = tasks.filter((t) => t.date === tomorrow && !t.done && !t.fixed).length + open.filter((t) => !parking(t)).length;
   // The same numbers as the day column: worked today, and left at the plan's pace.
   const atPace = useStore((s) => s.settings.planAtPace !== false);
   const pace = useMemo(() => (atPace ? (paceOf(tasks) ?? undefined) : undefined), [tasks, atPace]);
@@ -109,7 +114,8 @@ export function ShutdownRitual() {
                       <span>took</span>
                       <DurationInput
                         label={`Time spent on ${t.title}`}
-                        minutes={todaySec(t) / 60}
+                        // The same number the day counts: timed work, or for untimed work the time its block showed.
+                        minutes={workedMin(t)}
                         onChange={(min) => updateTask(t.id, { actualSec: Math.round((min ?? 0) * 60) + (t.trackedBefore ?? 0) })}
                       />
                       {t.planned !== null && <span className="muted">of {fmtMin(t.planned)}</span>}
@@ -123,7 +129,7 @@ export function ShutdownRitual() {
             <>
               <h4>Not done ({open.length})</h4>
               <p className="lede">
-                {open.some((t) => parkLimit !== null && t.rolled >= parkLimit)
+                {open.some(parking)
                   ? `These move to ${nextDay} on their own, except the ones marked for the backlog. Send anything else that can wait to the backlog too.`
                   : `These move to ${nextDay} on their own. Send anything that can wait to the backlog instead.`}
               </p>
@@ -135,7 +141,7 @@ export function ShutdownRitual() {
                       <span className="ritual-row-title">{t.title}</span>
                       <span className="row">
                         <ChannelPill channelId={t.channelId} />
-                        {parkLimit !== null && t.rolled >= parkLimit && <span className="meta meta-warn">goes to the backlog tonight</span>}
+                        {parking(t) && <span className="meta meta-warn">goes to the backlog tonight</span>}
                         {estimateUsedUp(t) && (
                           <span className="meta meta-warn">
                             {fmtMin(t.actualSec / 60)} done, past its {fmtMin(t.planned!)} estimate. How much is left?

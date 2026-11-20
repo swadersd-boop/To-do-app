@@ -17,4 +17,14 @@ describe('timerAsk', () => {
     const fresh = timerAsk({ taskId: 't', startedAt }, task({}), []);
     expect((fresh.at - startedAt) / 60_000).toBe(180);
   });
+
+  it('offers to stop at lunch for a timer that ran on through it', () => {
+    const at11 = new Date();
+    at11.setHours(11, 21, 0, 0);
+    const lunch = new Date(at11);
+    lunch.setHours(12, 0, 0, 0);
+    // A 1h30 task: the check comes at 13:36, and the stop it offers is the start of lunch.
+    const ask = timerAsk({ taskId: 't', startedAt: at11.getTime() }, task({ planned: 90 }), []);
+    expect(ask.stopAt).toBe(lunch.getTime());
+  });
 });

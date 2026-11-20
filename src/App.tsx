@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import type { ISODate, Task } from './types';
 import { keepWorkOnDay, useStore } from './store';
+import { maybeNudgeBackup } from './actions';
 import { useUI } from './ui';
 import { addDays, fromISO, isWeekend, relativeDay, todayISO, weekStart } from './lib/dates';
 import { focusTarget, tasksOn } from './lib/model';
@@ -93,9 +94,12 @@ function useDayRollover() {
       if (useStore.getState().settings.autoRollover) useStore.getState().rollover(now);
     };
     tick();
+    // Once the board is up, and a little later so it does not crowd the first look.
+    const nudge = window.setTimeout(maybeNudgeBackup, 4000);
     const id = window.setInterval(tick, 30_000);
     document.addEventListener('visibilitychange', tick);
     return () => {
+      window.clearTimeout(nudge);
       window.clearInterval(id);
       document.removeEventListener('visibilitychange', tick);
     };
@@ -523,6 +527,9 @@ function Planner() {
         accessibility={{ announcements, screenReaderInstructions: { draggable: 'To move a task, press Space, use the arrow keys, then press Space again to drop it, or Escape to cancel.' } }}
         autoScroll={{
           threshold: { x: 0.06, y: 0.2 },
+          // Slow enough that holding a card at the edge of a phone moves one day at a time, not a week.
+          acceleration: 4,
+          interval: 12,
           // The board must not run away while a card is held over the timeline.
           canScroll: (el) => !((overTimeline.current || towardTimeline.current) && el.classList.contains('board')),
         }}

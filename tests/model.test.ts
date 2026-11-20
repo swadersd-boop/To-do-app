@@ -250,7 +250,8 @@ describe('summaries', () => {
   it('totals the work the same way as its lines, and names a task past its estimate', () => {
     const tasks = [task({ title: 'Memo', planned: 120, actualSec: 25 * 60, channelId: 'w' }), task({ title: 'Research', planned: 60, actualSec: 70 * 60 })];
     const text = planText('2026-11-16', tasks, channels, '', (t) => (t.channelId === 'w' ? 1.5 : 1));
-    expect(text).toContain('1. Memo (1h 35m left of 2h) #work');
+    // At this pace the plan books more than the estimate, and the line says so.
+    expect(text).toContain('1. Memo (1h 35m left of 2h, about 2h 25m at your pace) #work');
     expect(text).toContain('2. Research (past its 1h estimate)');
     // Research has no estimate of what is left, so nothing is made up for it in the total.
     expect(text).toContain('Work: 1h 35m by your estimates, about 2h 25m at your pace');
@@ -541,6 +542,13 @@ describe('work done and work left', () => {
       task({ planned: 30, start: 570, fixed: true, done: true }),
     ];
     expect(workDone(day)).toBe(33 + 60 + 20);
+  });
+
+  it('credits nothing made up to a task whose estimate was used up before it was ticked off', () => {
+    // 45m timed on an earlier day against a 45m estimate, a few seconds short: ticking it off today adds no time.
+    const t = task({ planned: 45, actualSec: 45 * 60 - 3, trackedBefore: 45 * 60 - 3 });
+    expect(estimateUsedUp(t)).toBe(true);
+    expect(workDone([{ ...t, done: true }])).toBe(0);
   });
 
   it('counts only what was left of a task finished today without the timer', () => {
